@@ -7,6 +7,7 @@ import {
   requestResult,
   DEFAULT_SERVICES,
   MARKET_PRICES_RUB,
+  GOODS_PRICES_RUB,
   roundPriceRub,
   startPriceRub,
   canAssign,
@@ -130,8 +131,11 @@ describe("стартовые цены", () => {
     expect(startPriceRub("turnkey-bathroom")).toBe(165_000);
     expect(startPriceRub("нет-такой")).toBeNull();
   });
-  it("у каждой позиции прайса есть рыночная цена", () => {
-    for (const s of DEFAULT_SERVICES) expect(MARKET_PRICES_RUB[s.key], s.key).toBeTypeOf("number");
+  it("у каждой работы есть рыночная цена, у материала и оборудования — розничная", () => {
+    for (const s of DEFAULT_SERVICES) {
+      const list = (s.kind ?? "work") === "work" ? MARKET_PRICES_RUB : GOODS_PRICES_RUB;
+      expect(list[s.key], s.key).toBeTypeOf("number");
+    }
   });
   it("округление", () => {
     expect(roundPriceRub(333)).toBe(330);

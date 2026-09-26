@@ -1,4 +1,5 @@
 import { formatRub, type RequestStatus } from "@ks/core";
+import { router } from "expo-router";
 import { ClipboardList } from "lucide-react-native";
 import { useState } from "react";
 import { RequestRow } from "../../src/RequestRow";
@@ -16,7 +17,7 @@ const GROUPS: Record<string, { label: string; statuses: RequestStatus[] | null }
 
 type Group = keyof typeof GROUPS;
 
-/** Заявки владельца по группам. Карточка заявки со сметой и счетами — этап C. */
+/** Заявки владельца по группам. Нажатие — карточка заявки. */
 export default function OwnerRequests() {
   const [group, setGroup] = useState<Group>("new");
   const statuses = GROUPS[group]!.statuses;
@@ -43,6 +44,7 @@ export default function OwnerRequests() {
             visitAt={r.visitAt}
             visitUntil={r.visitUntil}
             amount={total ? formatRub(total) : null}
+            onPress={() => router.push(`/request/${r.id}`)}
           />
         );
       })}

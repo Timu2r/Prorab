@@ -24,6 +24,7 @@ export function adminRoutes(app: FastifyInstance, s: Services) {
   app.patch("/admin/masters/:id", async (req) => (need(req, "owner"), { master: await s.masters.update(id(req), body(schemas.patchMaster, req)) }));
   app.post("/admin/masters/:id/rates", async (req) => (need(req, "owner"), { master: await s.masters.setRate(id(req), body(schemas.rate, req)) }));
   app.get("/team", async (req) => ({ team: await s.masters.team(need(req, "master").id) }));
+  app.put("/me/availability", async (req) => s.masters.setAvailable(need(req, "master").id, body(schemas.availability, req).available));
 
   // Клиенты
   app.get("/admin/clients", async (req) => (need(req, "owner"), { clients: await s.clients.list(query(schemas.listClients, req).q) }));

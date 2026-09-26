@@ -1,4 +1,5 @@
 import {
+  CALC_IDS,
   CATEGORIES,
   INVOICE_KINDS,
   ITEM_KINDS,
@@ -50,9 +51,13 @@ export const schemas = {
     category: z.enum(CATEGORIES),
     name: z.string().trim().min(2).max(200),
     unit: z.enum(UNITS),
+    kind: z.enum(ITEM_KINDS).default("work"),
     price: kopecks.nullable().default(null),
+    cost: kopecks.nullable().default(null),
   }),
-  patchService: z.object({ name: z.string().trim().min(2).max(200), price: kopecks.nullable(), active: z.boolean(), sort: z.number().int() }).partial(),
+  patchService: z
+    .object({ name: z.string().trim().min(2).max(200), price: kopecks.nullable(), cost: kopecks.nullable(), active: z.boolean(), sort: z.number().int() })
+    .partial(),
   reprice: z.object({ percent: z.number().min(-50).max(100), category: z.enum(CATEGORIES).optional() }),
 
   // Мастера
@@ -80,6 +85,7 @@ export const schemas = {
       npdCheckedAt: date.nullable(),
       note: z.string().max(500),
       active: z.boolean(),
+      available: z.boolean(),
       isLead: z.boolean(),
       leadId: id.nullable(),
     })
@@ -98,7 +104,17 @@ export const schemas = {
     consent: z.literal(true, { error: "Нужно согласие на обработку персональных данных" }),
     website: z.string().max(200).default(""), // поле-ловушка: человек его не видит, бот заполняет
     utm: z.record(z.string().regex(/^utm_[a-z]{3,8}$/), z.string().max(200)).optional(),
+    address: z.string().trim().max(300).default(""),
+    // Ответы калькулятора. Цены с сайта не принимаем: сервер пересчитывает по своему прайсу
+    calc: z
+      .object({
+        id: z.enum(CALC_IDS as [string, ...string[]]),
+        answers: z.record(z.string().max(40), z.union([z.string().max(40), z.number(), z.boolean()])).refine((a) => Object.keys(a).length <= 40),
+      })
+      .optional(),
   }),
+  availability: z.object({ available: z.boolean() }),
+  approveEstimate: z.object({ acceptContract: z.boolean().default(false) }),
   newRequest: z.object({
     category: z.enum(CATEGORIES),
     serviceIds: z.array(z.string().max(60)).max(20).default([]),

@@ -1,3 +1,5 @@
+import type { ItemKind } from "./estimate";
+
 /** Направления работ. Порядок — как на сайте. */
 export const CATEGORIES = ["turnkey", "finishing", "floors", "facade", "electric", "plumbing", "climate", "vent", "general"] as const;
 export type Category = (typeof CATEGORIES)[number];
@@ -29,8 +31,10 @@ export const UNIT_LABELS: Record<Unit, string> = {
 /**
  * Позиции прайса на старте (docs/TZ.md, раздел 6). Цены вписывает владелец.
  * key — постоянный идентификатор позиции: по нему строится id в базе, менять нельзя.
+ * kind — работа, материал или оборудование (по умолчанию работа). Материалы и оборудование нужны калькулятору на
+ * сайте (docs/KALKULYATOR.md): он считает их отдельными строками, чтобы клиент видел, за что платит.
  */
-export const DEFAULT_SERVICES: readonly { key: string; category: Category; name: string; unit: Unit }[] = [
+export const DEFAULT_SERVICES: readonly { key: string; category: Category; name: string; unit: Unit; kind?: ItemKind }[] = [
   { key: "turnkey-cosmetic", category: "turnkey", name: "Косметический ремонт квартиры", unit: "m2" },
   { key: "turnkey-capital", category: "turnkey", name: "Капитальный ремонт квартиры", unit: "m2" },
   { key: "turnkey-bathroom", category: "turnkey", name: "Ремонт санузла под ключ", unit: "pcs" },
@@ -77,7 +81,7 @@ export const DEFAULT_SERVICES: readonly { key: string; category: Category; name:
 
   { key: "climate-mount-small", category: "climate", name: "Монтаж сплит-системы 7-12 BTU (трасса до 3 м)", unit: "pcs" },
   { key: "climate-mount-large", category: "climate", name: "Монтаж сплит-системы 18-24 BTU (трасса до 3 м)", unit: "pcs" },
-  { key: "climate-extra-pipe", category: "climate", name: "Трасса сверх стандартной", unit: "m" },
+  { key: "climate-extra-pipe", category: "climate", name: "Прокладка трассы сверх 3 м", unit: "m" },
   { key: "climate-dismount", category: "climate", name: "Демонтаж сплит-системы", unit: "pcs" },
   { key: "climate-move", category: "climate", name: "Перенос сплит-системы", unit: "pcs" },
   { key: "climate-service", category: "climate", name: "Чистка и ТО сплит-системы", unit: "pcs" },
@@ -95,6 +99,60 @@ export const DEFAULT_SERVICES: readonly { key: string; category: Category; name:
   { key: "general-visit", category: "general", name: "Выезд без выполнения работ", unit: "visit" },
   { key: "general-urgent", category: "general", name: "Срочный выезд", unit: "visit" },
   { key: "general-height", category: "general", name: "Работа на высоте", unit: "pcs" },
+
+  // Работы для калькулятора на сайте
+  { key: "climate-duct", category: "climate", name: "Монтаж декоративного короба для трассы", unit: "m" },
+  { key: "vent-drill", category: "vent", name: "Алмазное бурение отверстия 100–130 мм", unit: "pcs" },
+  { key: "electric-new-point", category: "electric", name: "Новая точка: подрозетник, штроба и кабель", unit: "point" },
+  { key: "electric-line", category: "electric", name: "Отдельная линия от щитка до 15 м", unit: "pcs" },
+  { key: "floors-tile-large", category: "floors", name: "Надбавка за крупный формат плитки", unit: "m2" },
+  { key: "facade-scaffold", category: "facade", name: "Леса: монтаж, аренда и демонтаж", unit: "m2" },
+  { key: "general-garbage", category: "general", name: "Вывоз строительного мусора", unit: "visit" },
+
+  // Материалы: закупаем по счёту клиента, цена — розничная
+  { key: "mat-copper-14", category: "climate", name: "Медная труба 1/4″ (6,35 мм)", unit: "m", kind: "material" },
+  { key: "mat-copper-38", category: "climate", name: "Медная труба 3/8″ (9,52 мм)", unit: "m", kind: "material" },
+  { key: "mat-copper-12", category: "climate", name: "Медная труба 1/2″ (12,7 мм)", unit: "m", kind: "material" },
+  { key: "mat-insulation", category: "climate", name: "Теплоизоляция для медной трубы", unit: "m", kind: "material" },
+  { key: "mat-ac-cable", category: "climate", name: "Межблочный кабель ПВС 4×1,5", unit: "m", kind: "material" },
+  { key: "mat-drain-hose", category: "climate", name: "Дренажный шланг", unit: "m", kind: "material" },
+  { key: "mat-ac-brackets", category: "climate", name: "Кронштейны наружного блока", unit: "pcs", kind: "material" },
+  { key: "mat-ac-kit", category: "climate", name: "Крепёж, лента и герметик для монтажа", unit: "pcs", kind: "material" },
+  { key: "mat-ac-duct", category: "climate", name: "Декоративный короб с поворотами", unit: "m", kind: "material" },
+  { key: "mat-drain-pump", category: "climate", name: "Дренажная помпа", unit: "pcs", kind: "material" },
+  { key: "mat-power-cable", category: "electric", name: "Силовой кабель ВВГнг 3×2,5", unit: "m", kind: "material" },
+  { key: "mat-breaker", category: "electric", name: "Автоматический выключатель", unit: "pcs", kind: "material" },
+  { key: "mat-rcd", category: "electric", name: "УЗО или дифавтомат", unit: "pcs", kind: "material" },
+  { key: "mat-point", category: "electric", name: "Материалы на точку: подрозетник, кабель, гофра", unit: "point", kind: "material" },
+  { key: "mat-socket", category: "electric", name: "Розетка или выключатель", unit: "pcs", kind: "material" },
+  { key: "mat-wiring", category: "electric", name: "Кабель, коробки и щиток для замены проводки", unit: "m2", kind: "material" },
+  { key: "mat-fan", category: "vent", name: "Вытяжной вентилятор", unit: "pcs", kind: "material" },
+  { key: "mat-vent-valve", category: "vent", name: "Обратный клапан", unit: "pcs", kind: "material" },
+  { key: "mat-inlet-valve", category: "vent", name: "Приточный клапан в стену", unit: "pcs", kind: "material" },
+  { key: "mat-vent-duct", category: "vent", name: "Воздуховод с фасонными частями", unit: "m", kind: "material" },
+  { key: "mat-plumb-kit", category: "plumbing", name: "Подводка, фитинги и краны на один прибор", unit: "pcs", kind: "material" },
+  { key: "mat-radiator-kit", category: "plumbing", name: "Краны, фитинги и кронштейны для радиатора", unit: "pcs", kind: "material" },
+  { key: "mat-pipe-point", category: "plumbing", name: "Трубы и фитинги на точку разводки", unit: "point", kind: "material" },
+  { key: "mat-plaster", category: "finishing", name: "Штукатурная смесь, маяки, грунт", unit: "m2", kind: "material" },
+  { key: "mat-putty", category: "finishing", name: "Шпаклёвка стартовая и финишная, грунт", unit: "m2", kind: "material" },
+  { key: "mat-paint", category: "finishing", name: "Интерьерная краска в 2 слоя и грунт", unit: "m2", kind: "material" },
+  { key: "mat-wallpaper-glue", category: "finishing", name: "Клей для обоев и грунт", unit: "m2", kind: "material" },
+  { key: "mat-underlay", category: "floors", name: "Подложка и плёнка под ламинат", unit: "m2", kind: "material" },
+  { key: "mat-tile-glue", category: "floors", name: "Плиточный клей, затирка, крестики", unit: "m2", kind: "material" },
+  { key: "mat-screed", category: "floors", name: "Смесь для стяжки, маяки, демпферная лента", unit: "m2", kind: "material" },
+  { key: "mat-plinth", category: "floors", name: "Плинтус с крепежом", unit: "m", kind: "material" },
+  { key: "mat-facade-plaster", category: "facade", name: "Фасадная штукатурка, сетка, грунт", unit: "m2", kind: "material" },
+  { key: "mat-facade-insulation", category: "facade", name: "Утеплитель 100 мм, клей, дюбели, сетка", unit: "m2", kind: "material" },
+  { key: "mat-facade-paint", category: "facade", name: "Фасадная краска и грунт", unit: "m2", kind: "material" },
+  { key: "mat-joint", category: "facade", name: "Герметик и уплотнитель для швов", unit: "m", kind: "material" },
+  { key: "mat-slopes", category: "facade", name: "Материалы для откосов и отливов", unit: "m", kind: "material" },
+  { key: "mat-rough-cosmetic", category: "turnkey", name: "Черновые материалы: косметический ремонт", unit: "m2", kind: "material" },
+  { key: "mat-rough-capital", category: "turnkey", name: "Черновые материалы: капитальный ремонт", unit: "m2", kind: "material" },
+  { key: "mat-rough-bathroom", category: "turnkey", name: "Черновые материалы для санузла", unit: "pcs", kind: "material" },
+
+  // Оборудование: продаём с монтажом, модель подбираем под помещение
+  { key: "eq-split-small", category: "climate", name: "Сплит-система для комнаты до 35 м² (инвертор)", unit: "pcs", kind: "equipment" },
+  { key: "eq-split-large", category: "climate", name: "Сплит-система для комнаты 35–70 м² (инвертор)", unit: "pcs", kind: "equipment" },
 ];
 
 /**
@@ -143,7 +201,7 @@ export const MARKET_PRICES_RUB: Readonly<Record<string, number>> = {
   "plumbing-clog": 2_000,
   "climate-mount-small": 9_900,
   "climate-mount-large": 14_900,
-  "climate-extra-pipe": 1_800,
+  "climate-extra-pipe": 900, // только работа: медь, изоляция и кабель — отдельными материалами
   "climate-dismount": 3_500,
   "climate-move": 12_900,
   "climate-service": 3_500,
@@ -159,6 +217,61 @@ export const MARKET_PRICES_RUB: Readonly<Record<string, number>> = {
   "general-visit": 1_000,
   "general-urgent": 2_000,
   "general-height": 3_000,
+  "climate-duct": 450,
+  "vent-drill": 3_500,
+  "electric-new-point": 1_500,
+  "electric-line": 5_000,
+  "floors-tile-large": 700,
+  "facade-scaffold": 350,
+  "general-garbage": 6_000,
+};
+
+/**
+ * Материалы и оборудование: розничные цены по Москве на сентябрь 2026 (рубли). Продаём по рознице — заработок на
+ * закупке по оптовой цене, поэтому наценку 10% сюда не добавляем. Владелец проверяет цены и вписывает закупочные.
+ */
+export const GOODS_PRICES_RUB: Readonly<Record<string, number>> = {
+  "mat-copper-14": 450,
+  "mat-copper-38": 650,
+  "mat-copper-12": 850,
+  "mat-insulation": 70,
+  "mat-ac-cable": 130,
+  "mat-drain-hose": 60,
+  "mat-ac-brackets": 2_000,
+  "mat-ac-kit": 800,
+  "mat-ac-duct": 450,
+  "mat-drain-pump": 5_500,
+  "mat-power-cable": 150,
+  "mat-breaker": 600,
+  "mat-rcd": 3_200,
+  "mat-point": 600,
+  "mat-socket": 400,
+  "mat-wiring": 1_500,
+  "mat-fan": 3_500,
+  "mat-vent-valve": 700,
+  "mat-inlet-valve": 7_500,
+  "mat-vent-duct": 600,
+  "mat-plumb-kit": 1_200,
+  "mat-radiator-kit": 3_000,
+  "mat-pipe-point": 1_800,
+  "mat-plaster": 450,
+  "mat-putty": 200,
+  "mat-paint": 220,
+  "mat-wallpaper-glue": 60,
+  "mat-underlay": 150,
+  "mat-tile-glue": 450,
+  "mat-screed": 600,
+  "mat-plinth": 250,
+  "mat-facade-plaster": 700,
+  "mat-facade-insulation": 1_900,
+  "mat-facade-paint": 280,
+  "mat-joint": 200,
+  "mat-slopes": 600,
+  "mat-rough-cosmetic": 2_500,
+  "mat-rough-capital": 6_500,
+  "mat-rough-bathroom": 55_000,
+  "eq-split-small": 42_000,
+  "eq-split-large": 80_000,
 };
 
 /** Стартовая наценка к рынку (решение владельца 2026-09-26: «чуть выше рыночных»): договор, гарантия и чек. */
@@ -213,4 +326,9 @@ function formatRubShort(k: number): string {
   return `${Math.round(k / 100)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, " ")} ₽`;
+}
+
+/** Стартовая цена любой позиции прайса: работы — рынок + наценка, материалы и оборудование — розница. */
+export function defaultPriceRub(key: string): number | null {
+  return GOODS_PRICES_RUB[key] ?? startPriceRub(key);
 }

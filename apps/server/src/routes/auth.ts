@@ -27,10 +27,12 @@ export function authRoutes(app: FastifyInstance, s: Services) {
       `SELECT type, company_name, inn, kpp FROM client_profiles WHERE user_id = $1`,
       [userId],
     );
-    const [m] = await s.db.query<{ is_lead: boolean }>(`SELECT is_lead FROM masters WHERE user_id = $1 AND active`, [userId]);
+    const [m] = await s.db.query<{ is_lead: boolean; available: boolean }>(`SELECT is_lead, available FROM masters WHERE user_id = $1 AND active`, [userId]);
     return {
       ...u!,
       isLead: m?.is_lead ?? false,
+      /** Принимает ли мастер заказы; null — не мастер. */
+      available: m ? m.available : null,
       profile: { type: p?.type ?? "person", companyName: p?.company_name ?? "", inn: p?.inn ?? "", kpp: p?.kpp ?? "" },
     };
   };

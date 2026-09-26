@@ -1,4 +1,5 @@
 import { CATEGORY_LABELS, formatRub, STATUS_LABELS } from "@ks/core";
+import { router } from "expo-router";
 import { CalendarClock, CircleAlert, CircleCheck } from "lucide-react-native";
 import { Text, View } from "react-native";
 import { useAuth } from "../../src/auth";
@@ -31,6 +32,7 @@ export default function OwnerDashboard() {
               d.attention.map((a, i) => (
                 <Card
                   key={`${a.kind}-${a.requestId ?? a.payoutId}-${i}`}
+                  onPress={a.requestId ? () => router.push(`/request/${a.requestId}`) : undefined}
                   style={{ flexDirection: "row", alignItems: "center", gap: 12, borderLeftWidth: 3, borderLeftColor: t.accent }}
                 >
                   <CircleAlert size={22} color={t.accent} />
@@ -51,7 +53,7 @@ export default function OwnerDashboard() {
               <Empty icon={CalendarClock} title="Визитов на сегодня нет" />
             ) : (
               d.today.map((v) => (
-                <Card key={v.id} style={{ gap: 6 }}>
+                <Card key={v.id} style={{ gap: 6 }} onPress={() => router.push(`/request/${v.id}`)}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
                     <Text style={{ color: t.text, fontSize: 16, fontWeight: "800" }}>{formatVisit(v.visitAt, v.visitUntil)}</Text>
                     <Pill text={STATUS_LABELS[v.status]} tone={statusTone(v.status)} />

@@ -133,7 +133,7 @@ export async function scene(t: T, opts: { materials?: boolean } = {}): Promise<S
   const saved = await t.call("PUT", `/estimates/${estimateId}/items`, owner, { items });
   expect(saved.status, JSON.stringify(saved.body)).toBe(200);
   expect((await t.call("POST", `/estimates/${estimateId}/send`, owner)).status).toBe(200);
-  const ok = await t.call("POST", `/estimates/${estimateId}/approve`, client);
+  const ok = await t.call("POST", `/estimates/${estimateId}/approve`, client, { acceptContract: true });
   expect(ok.status, JSON.stringify(ok.body)).toBe(200);
   const materialId = opts.materials ? (saved.body.estimate.items.find((i: { kind: string }) => i.kind === "material")?.id ?? null) : null;
   return { owner, master, client, id, masterId, estimateId, materialId };

@@ -1,9 +1,14 @@
 import { CATEGORY_LABELS, formatPhone, primaryRole, ROLE_LABELS, STATUS_LABELS, type Category, type RequestStatus } from "@ks/core";
-import { ClipboardList, HardHat, LogOut, Tags, type LucideIcon } from "lucide-react";
+import { ClipboardList, HardHat, LogOut, Smartphone, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import "../cabinet.css";
 import { SiteHeader } from "../components/SiteHeader";
+
+/** Приложение для владельца и мастеров: в разработке — Expo в браузере на порту 8082. */
+const APP_URL = import.meta.env.VITE_APP_URL ?? `http://${location.hostname}:8082`;
 
 type RequestItem = { id: string; number: string; status: RequestStatus; category: Category; district: string; createdAt: string };
 
@@ -47,11 +52,17 @@ export function CabinetPage() {
           </button>
         </div>
 
-        {role === "owner" && (
+        {role !== "client" && (
           <div className="tiles">
             <Tile Icon={ClipboardList} title="Заявки" text={requests ? `Всего: ${requests.length}` : "Загрузка…"} />
-            <Tile Icon={HardHat} title="Мастера" text="Появится на этапе 1" />
-            <Tile Icon={Tags} title="Прайс" text="Появится на этапе 1" />
+            <Tile Icon={HardHat} title="Работа с заявками" text="Сметы, мастера и задания — в приложении" />
+            <a className="tile tile-link" href={APP_URL}>
+              <div className="row">
+                <Smartphone size={20} />
+                Открыть приложение
+              </div>
+              <span className="muted">{APP_URL.replace(/^https?:\/\//, "")}</span>
+            </a>
           </div>
         )}
 
@@ -63,14 +74,23 @@ export function CabinetPage() {
             <span className="muted">Пока пусто</span>
           ) : (
             <div>
-              {requests.slice(0, 20).map((r) => (
-                <div key={r.id} className="list-item">
-                  <span>
-                    <b>{r.number}</b> <span className="muted">{CATEGORY_LABELS[r.category] ?? r.category}</span>
-                  </span>
-                  <span className="status">{STATUS_LABELS[r.status]}</span>
-                </div>
-              ))}
+              {requests.slice(0, 20).map((r) =>
+                role === "client" ? (
+                  <Link key={r.id} to={`/cabinet/z/${r.id}`} className="list-item list-link">
+                    <span>
+                      <b>{r.number}</b> <span className="muted">{CATEGORY_LABELS[r.category] ?? r.category}</span>
+                    </span>
+                    <span className="status">{STATUS_LABELS[r.status]}</span>
+                  </Link>
+                ) : (
+                  <div key={r.id} className="list-item">
+                    <span>
+                      <b>{r.number}</b> <span className="muted">{CATEGORY_LABELS[r.category] ?? r.category}</span>
+                    </span>
+                    <span className="status">{STATUS_LABELS[r.status]}</span>
+                  </div>
+                ),
+              )}
             </div>
           )}
         </section>

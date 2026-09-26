@@ -7,6 +7,7 @@ import { ApiError } from "../util";
 /** Без входа: прайс, заявка с сайта, файлы по подписанной ссылке (docs/TZ.md, 8.2). */
 export function publicRoutes(app: FastifyInstance, s: Services) {
   app.get("/services", async () => ({ services: await s.catalog.publicList() }));
+  app.get("/public/calculator", async () => ({ items: await s.catalog.calculatorPrices() }));
 
   // Лимит заявок по адресу — в памяти процесса: для одного сервера этого достаточно
   const leadHits = new Map<string, number[]>();

@@ -38,10 +38,11 @@ describe("заявка с сайта без входа (правило 11)", () 
 });
 
 describe("прайс", () => {
-  it("56 позиций с ценами рынок + 10%; владелец меняет цены направления на процент", async () => {
+  it("63 работы с ценами рынок + 10%; владелец меняет цены направления на процент", async () => {
     const owner = await t.login(OWNER);
     const list = (await t.call("GET", "/services")).body.services;
-    expect(list).toHaveLength(56);
+    expect(list).toHaveLength(63); // материалы и оборудование на сайте только в расчёте калькулятора
+    expect(list.some((s: { id: string }) => s.id.startsWith("svc_mat-"))).toBe(false);
     expect(list.find((s: { id: string }) => s.id === "svc_climate-mount-small").price).toBe(1_100_000);
     await t.call("POST", "/admin/services/reprice", owner, { percent: 10, category: "climate" });
     const after = (await t.call("GET", "/services")).body.services;

@@ -1,10 +1,13 @@
 import { formatRub, type RequestStatus } from "@ks/core";
+import { router } from "expo-router";
 import { ClipboardCheck } from "lucide-react-native";
 import { useState } from "react";
+import { api, errorText } from "../../src/api";
+import { useAuth } from "../../src/auth";
 import { isToday } from "../../src/format";
 import { RequestRow } from "../../src/RequestRow";
 import type { MasterRequestItem } from "../../src/types";
-import { Empty, ErrorBox, Loading, Screen, Segmented } from "../../src/ui";
+import { Empty, ErrorBox, Loading, Screen, Segmented, ToggleRow } from "../../src/ui";
 import { useApi } from "../../src/useApi";
 
 const ON_JOB: RequestStatus[] = ["accepted", "en_route", "on_site"];
@@ -19,9 +22,20 @@ function tabOf(r: MasterRequestItem): Tab | null {
   return null;
 }
 
-/** Задания мастера: новые (ждут ответа), сегодня, скоро, выполненные. Экран задания с шагами и фото — этап D. */
+/** Задания мастера: новые (ждут ответа), сегодня, скоро, выполненные. Сверху — «Принимаю заказы». */
 export default function MasterJobs() {
+  const { user, refresh } = useAuth();
   const [tab, setTab] = useState<Tab>("new");
+  const [availabilityError, setAvailabilityError] = useState("");
+  const setAvailable = async (v: boolean) => {
+    setAvailabilityError("");
+    try {
+      await api("PUT", "/me/availability", { available: v });
+      await refresh();
+    } catch (e) {
+      setAvailabilityError(errorText(e));
+    }
+  };
   const { data, error, loading, refreshing, reload } = useApi<{ requests: MasterRequestItem[] }>("/requests");
   const mine = (data?.requests ?? []).filter((r) => r.mine);
   const count = (k: Tab) => mine.filter((r) => tabOf(r) === k).length;
@@ -35,6 +49,15 @@ export default function MasterJobs() {
 
   return (
     <Screen brand title="Задания" onRefresh={reload} refreshing={refreshing}>
+      {user?.available !== null && user?.available !== undefined ? (
+        <ToggleRow
+          label="Принимаю заказы"
+          hint={user.available ? "Владелец видит, что вы свободны для новых заданий" : "Новые задания вам сейчас не предлагают"}
+          value={user.available}
+          onChange={(v) => void setAvailable(v)}
+        />
+      ) : null}
+      {availabilityError ? <ErrorBox text={availabilityError} /> : null}
       <Segmented value={tab} options={options} onChange={setTab} />
       {loading && !data ? <Loading /> : null}
       {error ? <ErrorBox text={error} onRetry={reload} /> : null}
@@ -51,6 +74,7 @@ export default function MasterJobs() {
           visitAt={r.visitAt}
           visitUntil={r.visitUntil}
           amount={r.pay === null ? "Сумма уточняется" : `Вам ${formatRub(r.pay)}`}
+          onPress={() => router.push(`/request/${r.id}`)}
         />
       ))}
     </Screen>

@@ -5,6 +5,8 @@ export * from "./services";
 export * from "./money";
 export * from "./brand";
 export * from "./logo";
+export * from "./calculator";
+export * from "./contract";
 export * from "./estimate";
 export * from "./kinds";
 export * from "./settings";

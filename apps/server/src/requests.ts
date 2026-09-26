@@ -1,11 +1,15 @@
 import {
+  CALCULATORS,
   canAssign,
   canReassign,
   canTransition,
   canUnassign,
+  describeAnswers,
   formatRequestNumber,
+  isCalcId,
   masterSeesContacts,
   normalizePhone,
+  quote,
   requestResult,
   unassignTarget,
   type RequestStatus,
@@ -13,11 +17,13 @@ import {
 import { isFinal, loadFor, loadRequest, masterInfo, mustBe, num, REQUEST_SELECT, type Actor, type RequestRow } from "./access";
 import type { User } from "./auth";
 import type { Db, Queryable } from "./db";
-import { approvedEstimate, clientEstimate, loadEstimates } from "./estimates";
+import { loadContract } from "./contracts";
+import { approvedEstimate, clientEstimate, createDraftEstimate, loadEstimates } from "./estimates";
 import { MAX_FILES_PER_REQUEST, type FileService } from "./files";
 import { logEvent, moveStatus, syncStatus, type By } from "./flow";
 import { clientInvoices, loadInvoices } from "./invoices";
 import { accruePayout, payForecast, type PayoutService } from "./payouts";
+import { loadPriceItems } from "./pricing";
 import type { SettingsService } from "./settings";
 import { addMonths, moscowDate } from "./time";
 import { ApiError, newId } from "./util";
@@ -203,7 +209,19 @@ export class RequestService {
    * Адрес и детали владелец уточняет по телефону. Клиент заводится по номеру; войти в кабинет
    * он сможет позже по коду на этот же номер и увидит там свою заявку.
    */
-  async createLead(input: { name: string; phone: string; category: string; comment: string; utm?: Record<string, string> }) {
+  /**
+   * Заявка с сайта. Если клиент считал в калькуляторе, сервер пересчитывает его ответы по своему прайсу
+   * (цены с сайта не принимаются) и кладёт расчёт в черновик сметы — владелец правит его после звонка.
+   */
+  async createLead(input: {
+    name: string;
+    phone: string;
+    category: string;
+    comment: string;
+    address?: string;
+    utm?: Record<string, string>;
+    calc?: { id: string; answers: Record<string, string | number | boolean> };
+  }) {
     const phone = normalizePhone(input.phone);
     if (!phone) throw new ApiError(400, "bad_phone", "Введите мобильный номер, например +7 999 123-45-67");
     return this.db.tx(async (q) => {
@@ -216,14 +234,52 @@ export class RequestService {
       const clientId = await upsertClient(q, phone, input.name);
       // Согласие дано в форме на сайте
       await q.query(`UPDATE users SET consent_at = COALESCE(consent_at, now()) WHERE id = $1`, [clientId]);
+
+      const items = input.calc && isCalcId(input.calc.id) ? await loadPriceItems(q) : [];
+      const qt = input.calc && isCalcId(input.calc.id) ? quote(input.calc.id, input.calc.answers, new Map(items.map((i) => [i.key, i]))) : null;
+      const category = qt ? qt.calc : input.category;
+      const answersText = qt ? describeAnswers(CALCULATORS[qt.calc], qt.answers) : [];
+      // Описание видят и мастера, поэтому цены в нём нет (правило 1): сумма расчёта — только в calc
+      const description = [input.comment, qt && `Расчёт на сайте: ${answersText.join("; ")}.`]
+        .filter(Boolean)
+        .join("\n\n");
+      const calc = qt && {
+        id: qt.calc,
+        answers: qt.answers,
+        lines: qt.lines.map((l) => ({ key: l.key, qty: l.qty, price: l.price })),
+        totals: qt.totals,
+        notes: qt.notes,
+        unpriced: qt.unpriced,
+      };
+
       const id = newId("req");
       const utm = input.utm && Object.keys(input.utm).length ? JSON.stringify(input.utm) : null;
       const [{ number }] = await q.query<{ number: number }>(
-        `INSERT INTO requests (id, client_id, category, description, source, consent_at, utm) VALUES ($1, $2, $3, $4, 'site', now(), $5) RETURNING number`,
-        [id, clientId, input.category, input.comment, utm],
+        `INSERT INTO requests (id, client_id, category, description, address, source, consent_at, utm, calc)
+         VALUES ($1, $2, $3, $4, $5, 'site', now(), $6, $7) RETURNING number`,
+        [id, clientId, category, description, input.address ?? "", utm, calc ? JSON.stringify(calc) : null],
       );
-      await logEvent(q, id, { userId: clientId, role: "client" }, "created", { source: "site" });
-      return { number: formatRequestNumber(number) };
+      const by = { userId: clientId, role: "client" };
+      await logEvent(q, id, by, "created", { source: "site", ...(qt ? { calc: qt.calc, total: qt.totals.total } : {}) });
+
+      if (qt?.lines.length) {
+        const byKey = new Map(items.map((i) => [i.key, i]));
+        await createDraftEstimate(q, id, {
+          items: qt.lines.map((l) => ({
+            kind: l.kind,
+            serviceId: byKey.get(l.key)!.serviceId,
+            name: l.name,
+            unit: l.unit,
+            qty: l.qty,
+            price: l.price ?? 0,
+            cost: byKey.get(l.key)!.cost,
+          })),
+          reservePercent: qt.reservePercent,
+          note: "Предварительный расчёт с сайта. Уточните у клиента и поправьте перед отправкой.",
+          createdBy: null,
+        });
+      }
+      return { number: formatRequestNumber(number), total: qt ? qt.totals.total : null };
     });
   }
 
@@ -343,6 +399,8 @@ export class RequestService {
       return {
         ...ownerItem(r),
         utm: r.utm,
+        calc: r.calc,
+        contract: await loadContract(q, id),
         ownerNote: r.owner_note,
         rating: r.rating,
         review: r.review,
@@ -364,6 +422,8 @@ export class RequestService {
       return {
         ...clientItem(r),
         review: r.review,
+        calc: r.calc,
+        contract: await loadContract(q, id),
         estimates: (await loadEstimates(q, id)).filter((e) => e.status !== "draft").map(clientEstimate),
         invoices: clientInvoices(await loadInvoices(q, id)),
         files: await this.fileViews(q, id, showResult ? ["client_photo", "before", "after", "act_paper"] : ["client_photo"]),

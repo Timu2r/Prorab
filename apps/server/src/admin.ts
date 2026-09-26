@@ -1,38 +1,55 @@
-import { normalizePhone, roundPriceRub, type TaxStatus } from "@ks/core";
+import { normalizePhone, roundPriceRub, type ItemKind, type TaxStatus } from "@ks/core";
 import type { Db, Queryable } from "./db";
+import { loadPriceItems } from "./pricing";
 import { ApiError, newId } from "./util";
 
-type ServiceRow = { id: string; category: string; name: string; unit: string; price: string | null; active: boolean; sort: number };
+type ServiceRow = {
+  id: string;
+  category: string;
+  name: string;
+  unit: string;
+  kind: ItemKind;
+  price: string | null;
+  cost: string | null;
+  active: boolean;
+  sort: number;
+};
 
-const service = (s: ServiceRow) => ({ ...s, price: s.price === null ? null : Number(s.price) });
+const service = (s: ServiceRow) => ({ ...s, price: s.price === null ? null : Number(s.price), cost: s.cost === null ? null : Number(s.cost) });
 
 export class CatalogService {
   constructor(private db: Db) {}
 
+  /** Цены работ для сайта: материалы и оборудование показываются только в расчёте калькулятора. */
   async publicList() {
-    const rows = await this.db.query<Omit<ServiceRow, "active" | "sort">>(
-      `SELECT id, category, name, unit, price FROM services WHERE active ORDER BY sort`,
+    const rows = await this.db.query<Pick<ServiceRow, "id" | "category" | "name" | "unit" | "price">>(
+      `SELECT id, category, name, unit, price FROM services WHERE active AND kind = 'work' ORDER BY sort`,
     );
     return rows.map((s) => ({ ...s, price: s.price === null ? null : Number(s.price) }));
   }
 
-  async adminList() {
-    return (await this.db.query<ServiceRow>(`SELECT id, category, name, unit, price, active, sort FROM services ORDER BY sort`)).map(service);
+  /** Прайс для калькулятора на сайте — без закупочных цен. */
+  async calculatorPrices() {
+    return (await loadPriceItems(this.db)).map(({ cost: _cost, serviceId: _id, ...item }) => item);
   }
 
-  async create(input: { category: string; name: string; unit: string; price: number | null }) {
+  async adminList() {
+    return (await this.db.query<ServiceRow>(`SELECT id, category, name, unit, kind, price, cost, active, sort FROM services ORDER BY sort`)).map(service);
+  }
+
+  async create(input: { category: string; name: string; unit: string; kind: ItemKind; price: number | null; cost: number | null }) {
     const [{ max }] = await this.db.query<{ max: number | null }>(`SELECT max(sort) AS max FROM services`);
     const [row] = await this.db.query<ServiceRow>(
-      `INSERT INTO services (id, category, name, unit, price, sort) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [newId("svc"), input.category, input.name, input.unit, input.price, (max ?? 0) + 10],
+      `INSERT INTO services (id, category, name, unit, kind, price, cost, sort) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [newId("svc"), input.category, input.name, input.unit, input.kind, input.price, input.kind === "work" ? null : input.cost, (max ?? 0) + 10],
     );
     return service(row);
   }
 
-  async update(id: string, patch: Partial<{ name: string; price: number | null; active: boolean; sort: number }>) {
+  async update(id: string, patch: Partial<{ name: string; price: number | null; cost: number | null; active: boolean; sort: number }>) {
     const sets: string[] = [];
     const params: unknown[] = [];
-    for (const k of ["name", "price", "active", "sort"] as const) {
+    for (const k of ["name", "price", "cost", "active", "sort"] as const) {
       if (patch[k] === undefined) continue;
       params.push(patch[k]);
       sets.push(`${k} = $${params.length}`);
@@ -72,11 +89,15 @@ type MasterRow = {
   npd_checked_at: string | null;
   note: string;
   active: boolean;
+  available: boolean;
+  available_at: Date | null;
   is_lead: boolean;
   lead_id: string | null;
   lead_name: string | null;
   team_size: number;
   active_jobs: number;
+  today_visits: number;
+  next_visit_at: Date | null;
   to_pay: string | number;
   rate: { mode: "percent" | "fixed"; percent: string | null; prices: Record<string, number>; valid_from: string } | null;
 };
@@ -93,10 +114,14 @@ const master = (m: MasterRow) => ({
   npdCheckedAt: m.npd_checked_at,
   note: m.note,
   active: m.active,
+  available: m.available,
+  availableAt: m.available_at,
   isLead: m.is_lead,
   lead: m.lead_id ? { id: m.lead_id, name: m.lead_name ?? "" } : null,
   teamSize: m.team_size,
   activeJobs: m.active_jobs,
+  todayVisits: m.today_visits,
+  nextVisitAt: m.next_visit_at,
   toPay: Number(m.to_pay),
   rate: m.rate && { mode: m.rate.mode, percent: m.rate.percent === null ? null : Number(m.rate.percent), prices: m.rate.prices, validFrom: m.rate.valid_from },
 });
@@ -117,16 +142,23 @@ export type MasterInput = {
 
 const ACTIVE_JOBS = `('assigned', 'accepted', 'en_route', 'on_site', 'done')`;
 
+/** Начало сегодняшнего дня по Москве (UTC+3) — не зависит от часового пояса сервера базы. */
+const MSK_TODAY = `((date_trunc('day', (now() AT TIME ZONE 'UTC') + interval '3 hours') - interval '3 hours') AT TIME ZONE 'UTC')`;
+
 export class MasterService {
   constructor(private db: Db) {}
 
   private select(where: string) {
     // Текущая ставка — последняя из вступивших в силу.
     return `
-      SELECT u.id, u.phone, u.name, m.skills, m.tax_status, m.inn, m.contract_no, to_char(m.contract_at, 'YYYY-MM-DD') AS contract_at,
+      SELECT u.id, u.phone, u.name, m.skills, m.tax_status, m.available, m.available_at, m.inn, m.contract_no, to_char(m.contract_at, 'YYYY-MM-DD') AS contract_at,
              to_char(m.npd_checked_at, 'YYYY-MM-DD') AS npd_checked_at, m.note, m.active, m.is_lead, m.lead_id, lu.name AS lead_name,
              (SELECT count(*)::int FROM masters t WHERE t.lead_id = m.user_id) AS team_size,
              (SELECT count(*)::int FROM requests rq WHERE rq.master_id = m.user_id AND rq.status IN ${ACTIVE_JOBS} AND rq.deleted_at IS NULL) AS active_jobs,
+             (SELECT count(*)::int FROM requests rq WHERE rq.master_id = m.user_id AND rq.status IN ${ACTIVE_JOBS} AND rq.deleted_at IS NULL
+                AND rq.visit_at >= ${MSK_TODAY} AND rq.visit_at < ${MSK_TODAY} + interval '1 day') AS today_visits,
+             (SELECT min(rq.visit_at) FROM requests rq WHERE rq.master_id = m.user_id AND rq.status IN ${ACTIVE_JOBS} AND rq.deleted_at IS NULL
+                AND rq.visit_at >= now()) AS next_visit_at,
              (SELECT COALESCE(sum(p.amount), 0) FROM payouts p WHERE p.master_id = m.user_id AND p.status = 'accrued') AS to_pay,
              (SELECT json_build_object('mode', r.mode, 'percent', r.percent, 'prices', r.prices, 'valid_from', to_char(r.valid_from, 'YYYY-MM-DD'))
               FROM master_rates r WHERE r.master_id = m.user_id AND r.valid_from <= current_date
@@ -183,7 +215,7 @@ export class MasterService {
     return this.get(id);
   }
 
-  async update(id: string, patch: Partial<Omit<MasterInput, "phone"> & { active: boolean }>) {
+  async update(id: string, patch: Partial<Omit<MasterInput, "phone"> & { active: boolean; available: boolean }>) {
     const current = await this.get(id);
     const cols: Record<string, string> = {
       skills: "skills",
@@ -194,6 +226,7 @@ export class MasterService {
       npdCheckedAt: "npd_checked_at",
       note: "note",
       active: "active",
+      available: "available",
       isLead: "is_lead",
       leadId: "lead_id",
     };
@@ -215,8 +248,19 @@ export class MasterService {
         await q.query(`UPDATE masters SET ${sets.join(", ")} WHERE user_id = $${params.length}`, params);
       }
       if (patch.name !== undefined) await q.query(`UPDATE users SET name = $1 WHERE id = $2`, [patch.name, id]);
+      if (patch.available !== undefined) await q.query(`UPDATE masters SET available_at = now() WHERE user_id = $1`, [id]);
     });
     return this.get(id);
+  }
+
+  /** Мастер сам отмечает, принимает ли сейчас заказы. Владелец видит это при назначении. */
+  async setAvailable(userId: string, available: boolean) {
+    const [m] = await this.db.query<{ user_id: string }>(
+      `UPDATE masters SET available = $1, available_at = now() WHERE user_id = $2 AND active RETURNING user_id`,
+      [available, userId],
+    );
+    if (!m) throw new ApiError(403, "forbidden", "Отметка «Принимаю заказы» — для мастеров");
+    return { available };
   }
 
   async setRate(id: string, rate: { mode: "percent"; percent: number; validFrom: string } | { mode: "fixed"; prices: Record<string, number>; validFrom: string }) {

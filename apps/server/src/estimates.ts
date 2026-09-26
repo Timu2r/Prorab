@@ -2,6 +2,7 @@ import { estimateTotals, type EstimateStatus, type ItemKind } from "@ks/core";
 import { isFinal, loadFor, mustBe, num } from "./access";
 import type { User } from "./auth";
 import type { Db, Queryable } from "./db";
+import { ensureContract, hasContract } from "./contracts";
 import { logEvent, syncStatus } from "./flow";
 import { ApiError, newId } from "./util";
 
@@ -171,13 +172,19 @@ export class EstimateService {
     });
   }
 
-  /** Клиент утверждает отправленную смету; владелец — черновик или отправленную («согласовано по телефону»). */
-  async approve(user: User, id: string) {
+  /**
+   * Клиент утверждает отправленную смету; владелец — черновик или отправленную («согласовано по телефону»).
+   * Первое согласование заключает договор: клиент при этом явно принимает его условия (acceptContract).
+   */
+  async approve(user: User, id: string, opts: { acceptContract?: boolean; ip?: string } = {}) {
     return this.db.tx(async (q) => {
       const { e, as } = await this.loadFor(q, user, id);
       mustBe(as, "owner", "client");
       const allowed: EstimateStatus[] = as === "owner" ? ["draft", "sent"] : ["sent"];
       if (!allowed.includes(e.status)) throw new ApiError(409, "bad_estimate_status", "Эту смету нельзя согласовать");
+      const firstContract = !(await hasContract(q, e.request_id));
+      if (as === "client" && firstContract && !opts.acceptContract)
+        throw new ApiError(400, "contract_required", "Подтвердите согласие с условиями договора");
       await requireItems(q, id);
       await q.query(`UPDATE estimates SET status = 'superseded' WHERE request_id = $1 AND status IN ('approved', 'sent') AND id <> $2`, [e.request_id, id]);
       await q.query(`UPDATE estimates SET status = 'approved', approved_at = now(), approved_by = $2, sent_at = COALESCE(sent_at, now()) WHERE id = $1`, [
@@ -188,6 +195,8 @@ export class EstimateService {
       await q.query(`UPDATE requests SET price_work = $1, price_goods = $2, updated_at = now() WHERE id = $3`, [full.totals.work, full.totals.goods, e.request_id]);
       const by = { userId: user.id, role: as };
       await logEvent(q, e.request_id, by, "estimate_approved", { estimateId: id, version: e.version, byPhone: as === "owner" });
+      if (firstContract)
+        await ensureContract(q, e.request_id, id, by, as === "client" ? "online" : "phone", opts.ip ?? "", { work: full.totals.work, goods: full.totals.goods });
       await syncStatus(q, e.request_id, by);
       return as === "owner" ? full : clientEstimate(full);
     });
@@ -204,6 +213,24 @@ export class EstimateService {
       return clientEstimate(await this.one(q, e.request_id, id));
     });
   }
+}
+
+/** Черновик сметы без проверки прав — для расчёта с сайта: заявку создаёт сам сервер. */
+export async function createDraftEstimate(
+  q: Queryable,
+  requestId: string,
+  input: { items: EstimateItemInput[]; reservePercent: number; note: string; createdBy: string | null },
+): Promise<string> {
+  const id = newId("est");
+  await q.query(`INSERT INTO estimates (id, request_id, version, reserve_percent, note, created_by) VALUES ($1, $2, 1, $3, $4, $5)`, [
+    id,
+    requestId,
+    input.reservePercent,
+    input.note,
+    input.createdBy,
+  ]);
+  for (const [i, it] of input.items.entries()) await insertItem(q, id, i, it);
+  return id;
 }
 
 async function insertItem(q: Queryable, estimateId: string, sort: number, it: EstimateItemInput): Promise<void> {

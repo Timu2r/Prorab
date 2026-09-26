@@ -26,6 +26,8 @@ export type RequestRow = {
   visit_until: Date | null;
   source: string;
   utm: Record<string, string> | null;
+  /** Ответы калькулятора и расчёт на момент заявки с сайта. */
+  calc: { id: string; answers: Record<string, string | number | boolean>; totals: { total: number; work: number; goods: number; reserve: number }; notes: { tone: string; text: string }[] } | null;
   status: RequestStatus;
   price_work: string | number | null; // bigint приходит строкой
   price_goods: string | number | null;

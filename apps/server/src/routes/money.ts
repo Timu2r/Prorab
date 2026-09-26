@@ -12,7 +12,10 @@ export function moneyRoutes(app: FastifyInstance, s: Services) {
   app.post("/requests/:id/estimates", async (req, reply) => reply.status(201).send({ estimate: await s.estimates.createVersion(need(req), id(req)) }));
   app.put("/estimates/:id/items", async (req) => ({ estimate: await s.estimates.saveDraft(need(req), id(req), body(schemas.estimateDraft, req)) }));
   app.post("/estimates/:id/send", async (req) => ({ estimate: await s.estimates.send(need(req), id(req)) }));
-  app.post("/estimates/:id/approve", async (req) => ({ estimate: await s.estimates.approve(need(req), id(req)) }));
+  app.post("/estimates/:id/approve", async (req) => {
+    const b = body(schemas.approveEstimate, req);
+    return { estimate: await s.estimates.approve(need(req), id(req), { acceptContract: b.acceptContract, ip: req.ip }) };
+  });
   app.post("/estimates/:id/reject", async (req) => ({ estimate: await s.estimates.reject(need(req), id(req), body(schemas.reject, req).reason) }));
 
   // Счета

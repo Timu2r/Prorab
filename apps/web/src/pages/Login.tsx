@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router";
+import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { api, ApiError, type User } from "../api";
 import { useAuth } from "../auth";
 import { formatPhoneInput } from "../components/LeadForm";
@@ -10,6 +10,9 @@ type CodeResponse = { phone: string; resendAfter: number; devCode?: string };
 export function LoginPage() {
   const { user, signIn } = useAuth();
   const navigate = useNavigate();
+  // Куда вернуться после входа: только страницы кабинета, чтобы ссылкой нельзя было увести на чужой сайт
+  const [params] = useSearchParams();
+  const next = params.get("next")?.startsWith("/cabinet") ? params.get("next")! : "/cabinet";
   const [phone, setPhone] = useState("");
   const [sent, setSent] = useState<CodeResponse | null>(null);
   const [code, setCode] = useState("");
@@ -23,7 +26,7 @@ export function LoginPage() {
     return () => clearTimeout(t);
   }, [wait]);
 
-  if (user) return <Navigate to="/cabinet" replace />;
+  if (user) return <Navigate to={next} replace />;
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -54,7 +57,7 @@ export function LoginPage() {
       void run(async () => {
         const r = await api<{ token: string; user: User }>("POST", "/auth/verify", { phone: sent!.phone, code: digits, device: "web" });
         signIn(r.token, r.user);
-        navigate("/cabinet", { replace: true });
+        navigate(next, { replace: true });
       });
   };
 

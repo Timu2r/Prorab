@@ -1,4 +1,4 @@
-import type { Category, PayoutKind, PayoutStatus, RequestStatus, TaxStatus, Unit } from "@ks/core";
+import type { Answers, CalcId, CalcNote, Category, ContractMethod, EstimateStatus, ItemKind, PayoutKind, PayoutStatus, RequestStatus, TaxStatus, Unit } from "@ks/core";
 
 /** Ответы API, которые показывают экраны (docs/TZ.md, раздел 8). */
 
@@ -62,8 +62,12 @@ export type MasterView = {
   lead: { id: string; name: string } | null;
   teamSize: number;
   activeJobs: number;
+  todayVisits: number;
+  nextVisitAt: string | null;
   toPay: number;
   active: boolean;
+  available: boolean;
+  availableAt: string | null;
 };
 
 export type Payout = {
@@ -86,3 +90,82 @@ export type Payouts = { payouts: Payout[]; totals: { accrued: number; paid: numb
 export type TeamMember = { id: string; name: string; phone: string; skills: Category[]; isLead: boolean; active: boolean; activeJobs: number; weekVisits: number };
 
 export type Service = { id: string; category: Category; name: string; unit: Unit; price: number | null };
+
+export type EstimateItem = {
+  id: string;
+  kind: ItemKind;
+  serviceId: string | null;
+  name: string;
+  unit: Unit;
+  qty: number;
+  price: number;
+  cost?: number | null;
+  usedQty?: number | null;
+};
+
+export type Estimate = {
+  id: string;
+  version: number;
+  status: EstimateStatus;
+  reservePercent: number;
+  note: string;
+  createdAt: string;
+  sentAt: string | null;
+  approvedAt: string | null;
+  rejectReason: string;
+  items: EstimateItem[];
+  totals: { work: number; materials: number; equipment: number; goods: number; total: number; reserve: number; cost?: number };
+};
+
+export type Contract = {
+  number: string;
+  method: ContractMethod;
+  termsVersion: string;
+  acceptedAt: string;
+  acceptedBy: string;
+  client: { name: string; phone: string; companyName: string; inn: string };
+  address: string;
+  priceWork: number;
+  priceGoods: number;
+};
+
+/** Расчёт клиента на сайте — как он был на момент заявки. */
+export type CalcSnapshot = { id: CalcId; answers: Answers; totals: { total: number; work: number; goods: number; reserve: number }; notes: CalcNote[] };
+
+export type RequestEvent = { at: string; actorRole: string; actorName: string | null; kind: string; payload: Record<string, unknown> };
+
+type Address = { address: string; apartment: string; entrance: string; floor: string; intercom: string };
+
+export type OwnerRequestDetail = OwnerRequestItem &
+  Address & {
+    description: string;
+    calc: CalcSnapshot | null;
+    contract: Contract | null;
+    ownerNote: string;
+    estimates: Estimate[];
+    events: RequestEvent[];
+    payForecast: number | null;
+    cancelReason: string;
+  };
+
+export type MasterTaskDetail = MasterRequestItem & {
+  description: string;
+  apartment: string | null;
+  entrance: string | null;
+  floor: string | null;
+  intercom: string | null;
+  works: { name: string; unit: Unit; qty: number }[];
+  materials: { id: string; name: string; unit: Unit; qty: number; usedQty: number | null }[];
+  role: "master" | "lead";
+};
+
+export type ClientRequestDetail = ClientRequestItem &
+  Address & {
+    description: string;
+    calc: CalcSnapshot | null;
+    contract: Contract | null;
+    estimates: Estimate[];
+    cancelReason: string;
+  };
+
+export type CatalogItem = { id: string; category: Category; name: string; unit: Unit; kind: ItemKind; price: number | null; cost: number | null; active: boolean };

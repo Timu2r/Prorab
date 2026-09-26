@@ -1,0 +1,511 @@
+/* Калькулятор: окно расчёта (components/Calculator.tsx). Цвета — токены из styles.css. */
+
+.calc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(10, 11, 13, 0.6);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.calc-dialog {
+  width: 100%;
+  max-width: 680px;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+@media (min-width: 720px) {
+  .calc-backdrop {
+    align-items: center;
+    padding: 24px;
+  }
+  .calc-dialog {
+    height: auto;
+    max-height: min(880px, calc(100dvh - 48px));
+    border-radius: 12px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+  }
+}
+.calc-head {
+  display: grid;
+  grid-template-columns: 42px 1fr 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.calc-head-title {
+  text-align: center;
+  display: grid;
+  gap: 2px;
+}
+.calc-head-title small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.calc-head h2 {
+  font-size: 19px;
+  font-weight: 800;
+}
+.icon-btn {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  border-color: var(--ink);
+}
+.calc-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 16px 24px;
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  /* строки сетки — по содержимому, иначе блоки со скруглением (overflow: hidden) сжимаются и обрезают строки */
+  grid-auto-rows: max-content;
+}
+.calc-lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.calc-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+@media (min-width: 720px) {
+  .calc-body {
+    padding: 22px 28px 28px;
+  }
+  .calc-foot {
+    padding: 14px 28px;
+  }
+}
+.calc-foot-stack {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.calc-foot-stack .btn {
+  flex: 1 1 auto;
+}
+.calc-total {
+  flex: 1;
+  display: grid;
+}
+.calc-total small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.calc-total b {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.calc-inline-error {
+  padding: 0 16px 12px;
+  color: var(--danger);
+  font-size: 14px;
+  background: var(--surface);
+}
+.calc-form {
+  display: contents;
+}
+
+/* Выбор направления */
+.calc-pick {
+  display: grid;
+  gap: 8px;
+}
+@media (min-width: 560px) {
+  .calc-pick {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.calc-pick-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.calc-pick-item:hover {
+  border-color: var(--accent);
+}
+.calc-pick-item svg {
+  color: var(--accent);
+  flex: none;
+  margin-top: 2px;
+}
+.calc-pick-other svg {
+  color: var(--muted);
+}
+.calc-pick-item span {
+  display: grid;
+  gap: 2px;
+}
+.calc-pick-item b {
+  font-size: 16px;
+}
+.calc-pick-item small {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Вопросы */
+.calc-field {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.calc-field legend,
+.calc-label {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 0;
+  margin-bottom: 2px;
+}
+.calc-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.calc-options {
+  display: grid;
+  gap: 8px;
+}
+.calc-option,
+.calc-toggle {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+.calc-option input,
+.calc-toggle input {
+  margin: 3px 0 0;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.calc-option.on,
+.calc-toggle.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.calc-option span,
+.calc-toggle span {
+  display: grid;
+  gap: 2px;
+}
+.calc-option b,
+.calc-toggle b {
+  font-weight: 600;
+  font-size: 15px;
+}
+.calc-option small,
+.calc-toggle small {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.calc-count {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+.stepper {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.stepper button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+.stepper button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.stepper output {
+  min-width: 32px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.calc-size {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.calc-size .input {
+  max-width: 140px;
+  font-weight: 700;
+}
+.calc-size > span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Расчёт */
+.calc-sum {
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  border-radius: 10px;
+  background: var(--dark);
+  color: var(--dark-ink);
+}
+.calc-sum small {
+  color: var(--dark-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.calc-sum b {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.calc-sum .muted {
+  color: var(--dark-muted);
+  font-size: 14px;
+}
+.calc-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.45;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.calc-note svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--muted);
+}
+.calc-note.warn {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.calc-note.warn svg {
+  color: var(--accent);
+}
+.calc-lines {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.calc-lines h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.calc-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.calc-line:last-child {
+  border-bottom: 0;
+}
+.calc-line > span:first-child {
+  grid-column: 1 / -1;
+  font-weight: 500;
+}
+.calc-line .muted {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.calc-line b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.calc-small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.calc-answers {
+  font-size: 14px;
+}
+.calc-answers summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.calc-answers ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 2px;
+}
+.calc-mini {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 15px;
+}
+.calc-mini b {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Готово */
+.calc-done {
+  justify-items: start;
+}
+.calc-done > svg {
+  color: var(--success);
+}
+.calc-done h3 {
+  font-size: 26px;
+  font-weight: 800;
+}
+.calc-done-sum {
+  margin: -8px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.calc-next {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 14px;
+  counter-reset: step;
+}
+.calc-next li {
+  display: grid;
+  gap: 2px;
+  padding-left: 40px;
+  position: relative;
+  counter-increment: step;
+}
+.calc-next li::before {
+  content: counter(step, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.calc-next span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Старт расчёта на первом экране */
+.calc-start-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.calc-start-grid button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: 52px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.calc-start-grid button:hover {
+  border-color: var(--accent);
+}
+.calc-start-grid svg {
+  color: var(--accent);
+  flex: none;
+}
+.calc-start-other {
+  justify-self: start;
+}
+.direction-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 15px;
+}

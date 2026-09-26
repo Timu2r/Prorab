@@ -27,6 +27,9 @@ export function SiteFooter() {
             </li>
           )}
           <li>
+            <Link to="/dogovor">Договор подряда</Link>
+          </li>
+          <li>
             <Link to="/privacy">Политика обработки персональных данных</Link>
           </li>
           <li>

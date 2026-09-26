@@ -1,7 +1,8 @@
-import { BRAND, CATEGORY_LABELS, formatRub, UNIT_LABELS, type Category, type Unit } from "@ks/core";
-import { ArrowRight, Camera, FileText, MapPin, Plus, Receipt, ShieldCheck, Trash2, Wallet } from "lucide-react";
+import { BRAND, CATEGORY_LABELS, formatRub, isCalcId, UNIT_LABELS, type Category, type Unit } from "@ks/core";
+import { ArrowRight, Camera, FileText, MapPin, MessageSquareText, Plus, Receipt, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { CalculatorDialog, type CalcStart } from "../components/Calculator";
 import { LeadForm } from "../components/LeadForm";
 import { SiteFooter } from "../components/SiteFooter";
 import { SiteHeader } from "../components/SiteHeader";
@@ -49,13 +50,17 @@ const FAQ = [
 export function HomePage() {
   const [services, setServices] = useState<Service[]>([]);
   const [tab, setTab] = useState<Category>("turnkey");
-  const [formCategory, setFormCategory] = useState<Category | "">("");
+  const [calcStart, setCalcStart] = useState<CalcStart | null>(null);
+  const openCalc = (calc: CalcStart["calc"] = null) => setCalcStart({ calc });
 
   useEffect(() => {
     document.title = `${BRAND.name} — ремонт и строительные работы в Москве и области`;
     api<{ services: Service[] }>("GET", "/services")
       .then((r) => setServices(r.services))
       .catch(() => {}); // без цен страница всё равно работает
+    // Ссылка вида /?calc=climate сразу открывает расчёт направления — для рекламы и мессенджеров
+    const calc = new URLSearchParams(location.search).get("calc");
+    if (calc && (isCalcId(calc) || calc === "general")) setCalcStart({ calc });
   }, []);
 
   // Цена главной работы направления: «Шпаклёвка от 550 ₽/м²». Поштучные позиции — без «/шт».
@@ -73,14 +78,6 @@ export function HomePage() {
 
   const tabServices = services.filter((s) => s.category === tab);
 
-  const openPrices = (c: Category) => {
-    setTab(c);
-    document.getElementById("ceny")?.scrollIntoView();
-  };
-  const orderFor = (c: Category) => {
-    setFormCategory(c);
-    document.getElementById("zayavka")?.scrollIntoView();
-  };
 
   return (
     <>
@@ -101,10 +98,10 @@ export function HomePage() {
                 чеком, гарантия {BRAND.warrantyMonths} месяцев.
               </p>
               <div className="hero-actions">
-                <a href="#zayavka" className="btn btn-primary">
+                <button className="btn btn-primary" onClick={() => openCalc()}>
                   Рассчитать стоимость
                   <ArrowRight size={18} />
-                </a>
+                </button>
                 <a href="#ceny" className="btn btn-outline-light">
                   Цены на работы
                 </a>
@@ -128,7 +125,22 @@ export function HomePage() {
                 </div>
               </div>
             </div>
-            <LeadForm id="zayavka" title="Расчёт стоимости" category={formCategory} onCategory={setFormCategory} />
+            <div className="lead-card" id="zayavka">
+              <h2>Рассчитать стоимость</h2>
+              <p>Выберите, что нужно сделать. Примерная цена — сразу, без звонка и регистрации.</p>
+              <div className="calc-start-grid">
+                {DIRECTIONS.map(({ category, Icon }) => (
+                  <button key={category} onClick={() => openCalc(category)}>
+                    <Icon size={20} />
+                    {CATEGORY_LABELS[category]}
+                  </button>
+                ))}
+              </div>
+              <button className="btn-link calc-start-other" onClick={() => openCalc("general")}>
+                <MessageSquareText size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />
+                Другая задача — опишите, перезвоним
+              </button>
+            </div>
           </div>
         </section>
 
@@ -140,7 +152,7 @@ export function HomePage() {
             </div>
             <div className="directions">
               {DIRECTIONS.map(({ category, Icon, works }, i) => (
-                <button key={category} className="direction" onClick={() => openPrices(category)}>
+                <button key={category} className="direction" onClick={() => openCalc(category)}>
                   <span className="direction-top">
                     {String(i + 1).padStart(2, "0")}
                     <Icon size={22} />
@@ -153,7 +165,10 @@ export function HomePage() {
                   </ul>
                   <span className="direction-price">
                     {priceFrom.get(category) ?? "Цена по смете"}
-                    <ArrowRight size={18} />
+                    <span className="direction-go">
+                      Рассчитать
+                      <ArrowRight size={18} />
+                    </span>
                   </span>
                 </button>
               ))}
@@ -186,8 +201,8 @@ export function HomePage() {
             </div>
             <div className="price-note">
               <p>Материалы закупаем по счёту заранее, работы оплачиваются после приёмки. На каждую оплату — кассовый чек.</p>
-              <button className="btn btn-outline" onClick={() => orderFor(tab)}>
-                Получить смету
+              <button className="btn btn-outline" onClick={() => openCalc(isCalcId(tab) ? tab : null)}>
+                Рассчитать стоимость
               </button>
             </div>
           </div>
@@ -261,6 +276,7 @@ export function HomePage() {
         </section>
       </main>
       <SiteFooter />
+      {calcStart && <CalculatorDialog start={calcStart} onClose={() => setCalcStart(null)} />}
     </>
   );
 }

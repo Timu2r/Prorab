@@ -1,4 +1,4 @@
-import { DEFAULT_SERVICES, MARKET_PRICES_RUB, startPriceRub } from "@ks/core";
+import { DEFAULT_SERVICES, defaultPriceRub, MARKET_PRICES_RUB, startPriceRub } from "@ks/core";
 import type { Db } from "./db";
 
 /**
@@ -317,6 +317,58 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
     id: 6,
     sql: () => `ALTER TABLE users ADD COLUMN consent_at timestamptz;`,
   },
+  {
+    // Калькулятор на сайте, договор с клиентом, «принимаю заказы» у мастера (docs/KALKULYATOR.md)
+    id: 7,
+    sql: () => {
+      const esc = (v: string) => v.replace(/'/g, "''");
+      const goods = DEFAULT_SERVICES.filter((s) => (s.kind ?? "work") !== "work");
+      return [
+        `ALTER TABLE services ADD COLUMN kind text NOT NULL DEFAULT 'work' CHECK (kind IN ('work', 'material', 'equipment'));`,
+        `ALTER TABLE services ADD COLUMN cost bigint CHECK (cost >= 0);`,
+        // Новые позиции — в базу, где их ещё нет (в свежей базе их уже добавила миграция 2)
+        ...DEFAULT_SERVICES.map(
+          (s, i) =>
+            `INSERT INTO services (id, category, name, unit, sort) VALUES ('svc_${s.key}', '${s.category}', '${esc(s.name)}', '${s.unit}', ${(i + 1) * 10}) ON CONFLICT (id) DO NOTHING;`,
+        ),
+        ...goods.map((s) => `UPDATE services SET kind = '${s.kind}' WHERE id = 'svc_${s.key}';`),
+        ...DEFAULT_SERVICES.flatMap((s) => {
+          const rub = defaultPriceRub(s.key);
+          return rub === null ? [] : [`UPDATE services SET price = ${rub * 100} WHERE id = 'svc_${s.key}' AND price IS NULL;`];
+        }),
+        // Метр трассы кондиционера теперь только работа: медь и изоляция считаются отдельно. Цену владельца не трогаем
+        `UPDATE services SET price = ${defaultPriceRub("climate-extra-pipe")! * 100} WHERE id = 'svc_climate-extra-pipe' AND price = 200000;`,
+        `UPDATE services SET name = 'Прокладка трассы сверх 3 м' WHERE id = 'svc_climate-extra-pipe' AND name = 'Трасса сверх стандартной';`,
+
+        // Ответы калькулятора и расчёт на момент заявки
+        `ALTER TABLE requests ADD COLUMN calc jsonb;`,
+
+        // Мастер сам отмечает, принимает ли сейчас заказы
+        `ALTER TABLE masters ADD COLUMN available boolean NOT NULL DEFAULT true;`,
+        `ALTER TABLE masters ADD COLUMN available_at timestamptz;`,
+
+        // Договор с клиентом: заключается при первом согласовании сметы; данные — снимок на момент заключения
+        `CREATE TABLE contracts (
+          id            text PRIMARY KEY,
+          request_id    text NOT NULL UNIQUE REFERENCES requests(id),
+          number        text NOT NULL UNIQUE,
+          estimate_id   text NOT NULL REFERENCES estimates(id),
+          terms_version text NOT NULL,
+          method        text NOT NULL CHECK (method IN ('online', 'phone', 'paper')),
+          accepted_by   text NOT NULL REFERENCES users(id),
+          accepted_at   timestamptz NOT NULL DEFAULT now(),
+          ip            text NOT NULL DEFAULT '',
+          client_name   text NOT NULL,
+          client_phone  text NOT NULL,
+          company_name  text NOT NULL DEFAULT '',
+          company_inn   text NOT NULL DEFAULT '',
+          address       text NOT NULL DEFAULT '',
+          price_work    bigint NOT NULL,
+          price_goods   bigint NOT NULL
+        );`,
+      ].join("\n");
+    },
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {
@@ -329,6 +381,11 @@ export async function migrate(db: Db): Promise<void> {
       await q.query(`INSERT INTO migrations (id) VALUES ($1)`, [m.id]);
     });
   }
+  // PostgreSQL заранее резервирует номера пачкой по 32 и теряет их при аварийной остановке — номера заявок
+  // прыгали бы (Z-0001, затем Z-0034). При каждом запуске счётчик продолжает с последнего номера.
+  await db.query(
+    `SELECT setval('request_number_seq', GREATEST((SELECT COALESCE(max(number), 0) FROM requests), 1), (SELECT count(*) > 0 FROM requests))`,
+  );
 }
 
 /** Делит миграцию на команды по «;» в конце строки (в наших миграциях нет «;» внутри строк). */

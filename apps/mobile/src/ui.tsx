@@ -1,5 +1,6 @@
 import type { RequestStatus } from "@ks/core";
-import type { LucideIcon } from "lucide-react-native";
+import { router } from "expo-router";
+import { ArrowLeft, type LucideIcon } from "lucide-react-native";
 import type { ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -9,6 +10,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -44,6 +46,7 @@ export function statusTone(s: RequestStatus): Tone {
 /**
  * Экран с заголовком и прокруткой. На широком экране (браузер на ПК) содержимое по центру, не шире 760 px.
  * brand — строка с логотипом и сегодняшней датой над заголовком, для главных вкладок.
+ * back — кнопка «Назад» над заголовком, для экранов, открытых поверх вкладок (карточка заявки, договор).
  */
 export function Screen({
   title,
@@ -51,6 +54,7 @@ export function Screen({
   right,
   top,
   brand,
+  back,
   children,
   onRefresh,
   refreshing = false,
@@ -60,6 +64,7 @@ export function Screen({
   right?: ReactNode;
   top?: ReactNode;
   brand?: boolean;
+  back?: boolean;
   children?: ReactNode;
   onRefresh?: () => void;
   refreshing?: boolean;
@@ -78,6 +83,17 @@ export function Screen({
               <Logo height={17} tagline={false} />
               <Text style={{ color: t.muted, fontSize: 13, fontWeight: "600" }}>{formatToday()}</Text>
             </View>
+          ) : null}
+          {back ? (
+            <Pressable
+              onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+              accessibilityRole="button"
+              accessibilityLabel="Назад"
+              hitSlop={8}
+              style={({ pressed }) => [s.back, { borderColor: t.line, opacity: pressed ? 0.7 : 1 }]}
+            >
+              <ArrowLeft size={20} color={t.text} />
+            </Pressable>
           ) : null}
           {top}
           <View style={s.header}>
@@ -277,6 +293,35 @@ export function ErrorBox({ text, onRetry }: { text: string; onRetry?: () => void
   );
 }
 
+/** Выбор из нескольких коротких вариантов: день визита, время. */
+export function Chip({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  const t = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      style={({ pressed }) => [s.chip, { backgroundColor: on ? t.accent : t.surface, borderColor: on ? t.accent : t.line, opacity: pressed ? 0.8 : 1 }]}
+    >
+      <Text style={{ color: on ? t.accentText : t.text, fontSize: 14, fontWeight: "700" }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** Переключатель с подписью: «Принимаю заказы». */
+export function ToggleRow({ label, hint, value, onChange, disabled }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  const t = useTheme();
+  return (
+    <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ color: t.text, fontSize: 16, fontWeight: "700" }}>{label}</Text>
+        {hint ? <Text style={{ color: t.muted, fontSize: 13 }}>{hint}</Text> : null}
+      </View>
+      <Switch value={value} onValueChange={onChange} disabled={disabled} trackColor={{ true: t.accent, false: t.line }} thumbColor="#fff" />
+    </Card>
+  );
+}
+
 /** Строка «подпись — значение». */
 export function KV({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   const t = useTheme();
@@ -311,6 +356,8 @@ const s = StyleSheet.create({
   content: { padding: 16, paddingBottom: 48 },
   inner: { width: "100%", maxWidth: 760, alignSelf: "center", gap: 12 },
   header: { flexDirection: "row", alignItems: "flex-end", gap: 12, marginBottom: 4 },
+  back: { width: 42, height: 42, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  chip: { minHeight: 40, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, justifyContent: "center" },
   brand: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingBottom: 12, marginBottom: 4, borderBottomWidth: 1 },
   mark: { width: 4, height: 16, borderRadius: 1 },
   title: { fontSize: 30, fontWeight: "800", letterSpacing: -0.6 },

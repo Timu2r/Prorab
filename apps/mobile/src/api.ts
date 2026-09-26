@@ -33,6 +33,8 @@ export type Me = {
   name: string;
   roles: Role[];
   isLead: boolean;
+  /** Принимает ли мастер заказы; null — не мастер. */
+  available: boolean | null;
   consentAt: string | null;
   profile: { type: "person" | "company"; companyName: string; inn: string; kpp: string };
 };

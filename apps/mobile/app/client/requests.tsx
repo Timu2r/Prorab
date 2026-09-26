@@ -1,11 +1,12 @@
 import { formatRub } from "@ks/core";
+import { router } from "expo-router";
 import { ListChecks } from "lucide-react-native";
 import { RequestRow } from "../../src/RequestRow";
 import type { ClientRequestItem } from "../../src/types";
 import { Empty, ErrorBox, Loading, Screen } from "../../src/ui";
 import { useApi } from "../../src/useApi";
 
-/** Заявки клиента. Экран заявки со сметой, оплатой и приёмкой — этап E. */
+/** Заявки клиента. Нажатие — заявка со сметой и договором. */
 export default function ClientRequests() {
   const { data, error, loading, refreshing, reload } = useApi<{ requests: ClientRequestItem[] }>("/requests");
   const list = data?.requests ?? [];
@@ -27,6 +28,7 @@ export default function ClientRequests() {
             visitAt={r.visitAt}
             visitUntil={r.visitUntil}
             amount={total ? formatRub(total) : null}
+            onPress={() => router.push(`/request/${r.id}`)}
           />
         );
       })}
