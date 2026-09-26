@@ -1,4 +1,4 @@
-import { DEFAULT_SERVICES, MARKET_PRICES_RUB } from "@ks/core";
+import { DEFAULT_SERVICES, MARKET_PRICES_RUB, startPriceRub } from "@ks/core";
 import type { Db } from "./db";
 
 /**
@@ -130,6 +130,14 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
     sql: () =>
       Object.entries(MARKET_PRICES_RUB)
         .map(([key, rub]) => `UPDATE services SET price = ${rub * 100} WHERE id = 'svc_${key}' AND price IS NULL;`)
+        .join("\n"),
+  },
+  {
+    // Наценка 10% к рынку — только там, где стоит рыночная цена из миграции 3: свои цены владельца не трогаем
+    id: 4,
+    sql: () =>
+      Object.entries(MARKET_PRICES_RUB)
+        .map(([key, rub]) => `UPDATE services SET price = ${startPriceRub(key, 10)! * 100} WHERE id = 'svc_${key}' AND price = ${rub * 100};`)
         .join("\n"),
   },
 ];

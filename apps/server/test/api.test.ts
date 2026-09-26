@@ -221,7 +221,7 @@ describe("мастера и ставки", () => {
     expect(list).toHaveLength(56);
     // рыночные цены «от» проставлены всем позициям
     expect(list.every((s: { price: number | null }) => s.price !== null)).toBe(true);
-    expect(list.find((s: { id: string }) => s.id === "svc_climate-mount-small").price).toBe(990_000);
+    expect(list.find((s: { id: string }) => s.id === "svc_climate-mount-small").price).toBe(1_100_000); // 9 900 ₽ рынок + 10% = 10 890 -> 11 000
     const s = await call("PATCH", `/admin/services/${list[0].id}`, owner, { price: 1_500_000 });
     expect(s.body.service.price).toBe(1_500_000);
     expect((await call("GET", "/services")).body.services[0].price).toBe(1_500_000);
@@ -267,5 +267,20 @@ describe("заявка с сайта без входа", () => {
   it("не больше пяти заявок в час с одного адреса", async () => {
     for (let i = 0; i < 5; i++) await call("POST", "/public/leads", undefined, { ...lead, phone: `+7999000011${i}` });
     expect((await call("POST", "/public/leads", undefined, { ...lead, phone: "+79990000120" })).status).toBe(429);
+  });
+});
+
+describe("миграции цен", () => {
+  it("наценка не трогает цену, которую владелец уже поменял", async () => {
+    const owner = await login(OWNER);
+    await call("PATCH", "/admin/services/svc_climate-service", owner, { price: 450_000 });
+    // Имитируем базу, где миграция 4 ещё не выполнялась и стоит рыночная цена
+    await db.query(`DELETE FROM migrations WHERE id = 4`);
+    await db.query(`UPDATE services SET price = 300000 WHERE id = 'svc_climate-freon'`);
+    const { migrate: run } = await import("../src/migrations");
+    await run(db);
+    const list = (await call("GET", "/services")).body.services as { id: string; price: number }[];
+    expect(list.find((s) => s.id === "svc_climate-service")!.price).toBe(450_000); // своя цена осталась
+    expect(list.find((s) => s.id === "svc_climate-freon")!.price).toBe(330_000); // рыночная 3 000 -> 3 300
   });
 });

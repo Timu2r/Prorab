@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_SERVICES,
+  MARKET_PRICES_RUB,
+  roundPriceRub,
+  startPriceRub,
   canAssign,
   canCancel,
   canTransition,
@@ -110,5 +114,23 @@ describe("деньги", () => {
   it("формат суммы", () => {
     expect(formatRub(1_234_567)).toBe("12 345,67 ₽");
     expect(formatRub(500_000)).toBe("5 000 ₽");
+  });
+});
+
+describe("стартовые цены", () => {
+  it("рынок + 10% с красивым округлением", () => {
+    expect(startPriceRub("finishing-putty")).toBe(610); // 550 -> 605
+    expect(startPriceRub("turnkey-cosmetic")).toBe(6_100); // 5 500 -> 6 050
+    expect(startPriceRub("climate-mount-small")).toBe(11_000); // 9 900 -> 10 890
+    expect(startPriceRub("turnkey-bathroom")).toBe(165_000);
+    expect(startPriceRub("нет-такой")).toBeNull();
+  });
+  it("у каждой позиции прайса есть рыночная цена", () => {
+    for (const s of DEFAULT_SERVICES) expect(MARKET_PRICES_RUB[s.key], s.key).toBeTypeOf("number");
+  });
+  it("округление", () => {
+    expect(roundPriceRub(333)).toBe(330);
+    expect(roundPriceRub(1_650)).toBe(1_700);
+    expect(roundPriceRub(16_390)).toBe(16_500);
   });
 });

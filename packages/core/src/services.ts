@@ -160,3 +160,18 @@ export const MARKET_PRICES_RUB: Readonly<Record<string, number>> = {
   "general-urgent": 2_000,
   "general-height": 3_000,
 };
+
+/** Стартовая наценка к рынку (решение владельца 2026-09-26: «чуть выше рыночных»): договор, гарантия и чек. */
+export const START_MARKUP_PERCENT = 10;
+
+/** «Красивая» цена: до 10 ₽ ниже 1 000, до 100 ₽ ниже 10 000, дальше до 500 ₽. */
+export function roundPriceRub(rub: number): number {
+  const step = rub < 1_000 ? 10 : rub < 10_000 ? 100 : 500;
+  return Math.round(rub / step) * step;
+}
+
+/** Стартовая цена позиции для прайса: рынок + наценка, округлённая. null — позиции нет в рыночном списке. */
+export function startPriceRub(key: string, markupPercent = START_MARKUP_PERCENT): number | null {
+  const market = MARKET_PRICES_RUB[key];
+  return market === undefined ? null : roundPriceRub(market * (1 + markupPercent / 100));
+}
