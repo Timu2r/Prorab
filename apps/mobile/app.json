@@ -13,6 +13,18 @@
     "android": {
       "package": "ru.klimatservis.app"
     },
-    "plugins": ["expo-router", "expo-secure-store"]
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "Отвес",
+      "shortName": "Отвес",
+      "lang": "ru",
+      "themeColor": "#17191c",
+      "backgroundColor": "#f3f1ec"
+    }
   }
 }

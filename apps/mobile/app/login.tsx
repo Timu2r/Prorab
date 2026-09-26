@@ -1,13 +1,17 @@
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api, ApiError, type User } from "../src/api";
+import { api, errorText } from "../src/api";
 import { useAuth } from "../src/auth";
+import { formatPhoneInput } from "../src/format";
+import { Logo } from "../src/Logo";
 import { useTheme } from "../src/theme";
+import { Button, Field } from "../src/ui";
 
 type CodeResponse = { phone: string; resendAfter: number; devCode?: string };
 
+/** Вход по номеру: звонок, последние 4 цифры входящего номера — код. */
 export default function Login() {
   const t = useTheme();
   const { signIn } = useAuth();
@@ -30,7 +34,7 @@ export default function Login() {
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Что-то пошло не так");
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -49,101 +53,78 @@ export default function Login() {
     setCode(digits);
     if (digits.length === 4)
       void run(async () => {
-        const r = await api<{ token: string; user: User }>("POST", "/auth/verify", { phone: sent!.phone, code: digits, device: Platform.OS });
-        await signIn(r.token, r.user);
-        router.replace("/home");
+        const r = await api<{ token: string }>("POST", "/auth/verify", { phone: sent!.phone, code: digits, device: Platform.OS });
+        await signIn(r.token);
+        router.replace("/");
       });
   };
 
-  const s = styles(t);
-  const canSend = phone.replace(/\D/g, "").length >= 10 && !busy;
-
   return (
-    <SafeAreaView style={s.screen}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.body}>
-        {!sent ? (
-          <>
-            <Text style={s.title}>Вход</Text>
-            <Text style={s.muted}>
-              Вам позвонят с незнакомого номера. Последние 4 цифры этого номера — код входа, отвечать на звонок не нужно.
-            </Text>
-            <TextInput
-              style={s.input}
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="+7 999 123-45-67"
-              placeholderTextColor={t.muted}
-              keyboardType="phone-pad"
-              autoComplete="tel"
-              textContentType="telephoneNumber"
-              autoFocus
-            />
-            {!!error && <Text style={s.error}>{error}</Text>}
-            <Pressable style={[s.button, !canSend && { opacity: 0.5 }]} disabled={!canSend} onPress={requestCode}>
-              <Text style={s.buttonText}>Получить код</Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            <Text style={s.title}>Код из звонка</Text>
-            <Text style={s.muted}>Звоним на {sent.phone}. Введите последние 4 цифры номера, с которого поступил звонок.</Text>
-            {!!sent.devCode && (
-              <View style={s.hint}>
-                <Text style={{ color: t.text }}>Режим разработки: код {sent.devCode}</Text>
-              </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 20 }} keyboardShouldPersistTaps="handled">
+          <View style={{ width: "100%", maxWidth: 420, alignSelf: "center", gap: 18 }}>
+            <Logo />
+            {!sent ? (
+              <>
+                <Text style={{ color: t.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 }}>Вход</Text>
+                <Text style={{ color: t.muted, fontSize: 15, lineHeight: 21 }}>
+                  Вам позвонят с незнакомого номера. Последние 4 цифры этого номера — код входа, отвечать на звонок не нужно.
+                </Text>
+                <Field
+                  label="Мобильный телефон"
+                  value={phone}
+                  onChangeText={(v) => setPhone(formatPhoneInput(v))}
+                  placeholder="+7 (999) 123-45-67"
+                  keyboardType="phone-pad"
+                  autoComplete="tel"
+                  textContentType="telephoneNumber"
+                  autoFocus
+                  error={error || null}
+                />
+                <Button title="Получить код" onPress={requestCode} loading={busy} disabled={phone.replace(/\D/g, "").length < 11} />
+              </>
+            ) : (
+              <>
+                <Text style={{ color: t.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 }}>Код из звонка</Text>
+                <Text style={{ color: t.muted, fontSize: 15, lineHeight: 21 }}>
+                  Звоним на {formatPhoneInput(sent.phone)}. Введите последние 4 цифры номера, с которого поступил звонок.
+                </Text>
+                {sent.devCode ? (
+                  <View style={{ padding: 12, borderRadius: 10, backgroundColor: t.surface2 }}>
+                    <Text style={{ color: t.text }}>Режим разработки: код {sent.devCode}</Text>
+                  </View>
+                ) : null}
+                <Field
+                  label="Код"
+                  value={code}
+                  onChangeText={onCode}
+                  keyboardType="number-pad"
+                  textContentType="oneTimeCode"
+                  autoComplete="sms-otp"
+                  maxLength={4}
+                  editable={!busy}
+                  autoFocus
+                  style={{ textAlign: "center", fontSize: 28, letterSpacing: 12, fontWeight: "700" }}
+                  error={error || null}
+                />
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Pressable onPress={() => setSent(null)} hitSlop={10}>
+                    <Text style={{ color: t.accent, fontSize: 15, fontWeight: "700" }}>Изменить номер</Text>
+                  </Pressable>
+                  {wait > 0 ? (
+                    <Text style={{ color: t.muted, fontSize: 15 }}>Повторить через {wait} с</Text>
+                  ) : (
+                    <Pressable onPress={requestCode} disabled={busy} hitSlop={10}>
+                      <Text style={{ color: t.accent, fontSize: 15, fontWeight: "700" }}>Позвонить ещё раз</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </>
             )}
-            <TextInput
-              style={[s.input, s.code]}
-              value={code}
-              onChangeText={onCode}
-              keyboardType="number-pad"
-              textContentType="oneTimeCode"
-              autoComplete="sms-otp"
-              maxLength={4}
-              editable={!busy}
-              autoFocus
-            />
-            {!!error && <Text style={s.error}>{error}</Text>}
-            <View style={s.row}>
-              <Pressable onPress={() => setSent(null)} hitSlop={8}>
-                <Text style={s.link}>Изменить номер</Text>
-              </Pressable>
-              {wait > 0 ? (
-                <Text style={s.muted}>Повторить через {wait} с</Text>
-              ) : (
-                <Pressable onPress={requestCode} disabled={busy} hitSlop={8}>
-                  <Text style={s.link}>Позвонить ещё раз</Text>
-                </Pressable>
-              )}
-            </View>
-          </>
-        )}
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-
-const styles = (t: ReturnType<typeof useTheme>) =>
-  StyleSheet.create({
-    screen: { flex: 1, backgroundColor: t.bg },
-    body: { flex: 1, padding: 20, justifyContent: "center", gap: 16 },
-    title: { fontSize: 28, fontWeight: "700", color: t.text },
-    muted: { fontSize: 15, color: t.muted, lineHeight: 21 },
-    input: {
-      minHeight: 54,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: t.line,
-      backgroundColor: t.surface,
-      color: t.text,
-      paddingHorizontal: 16,
-      fontSize: 19,
-    },
-    code: { textAlign: "center", fontSize: 28, letterSpacing: 12 },
-    button: { minHeight: 52, borderRadius: 12, backgroundColor: t.accent, alignItems: "center", justifyContent: "center" },
-    buttonText: { color: t.accentText, fontSize: 17, fontWeight: "600" },
-    error: { color: t.danger, fontSize: 14 },
-    hint: { padding: 12, borderRadius: 10, backgroundColor: t.accentSoft },
-    row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-    link: { color: t.accent, fontSize: 15, fontWeight: "500" },
-  });

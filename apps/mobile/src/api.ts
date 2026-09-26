@@ -1,20 +1,41 @@
 import type { Role } from "@ks/core";
 import Constants from "expo-constants";
-import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
+import { storage } from "./storage";
+
+export const TOKEN_KEY = "ks_token";
 
 /**
- * Адрес сервера. В разработке берём IP компьютера, с которого Expo раздаёт приложение:
- * телефон в той же сети Wi-Fi достучится до сервера на порту 4100.
+ * Адрес API. На боевом сервере — EXPO_PUBLIC_API_URL (https://api.<домен>). В разработке: в браузере — тот же
+ * компьютер, на телефоне — IP компьютера, с которого Expo раздаёт приложение (телефон в той же сети Wi-Fi).
  */
-function baseUrl(): string {
+export function apiBase(): string {
   if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  if (Platform.OS === "web") {
+    const loc = (globalThis as { location?: { protocol: string; hostname: string } }).location;
+    return `${loc?.protocol ?? "http:"}//${loc?.hostname ?? "localhost"}:4100`;
+  }
   const host = Constants.expoConfig?.hostUri?.split(":")[0] ?? "localhost";
   return `http://${host}:4100`;
 }
 
-const TOKEN_KEY = "ks_token";
+/** Сайт — для ссылок на политику обработки данных и условия работ. */
+export function siteUrl(path = ""): string {
+  return (process.env.EXPO_PUBLIC_SITE_URL ?? apiBase().replace(":4100", ":5190")) + path;
+}
 
-export type User = { id: string; phone: string; name: string; roles: Role[] };
+/** Фото приходят с сервера относительными подписанными ссылками (/files/…). */
+export const fileUrl = (path: string) => apiBase() + path;
+
+export type Me = {
+  id: string;
+  phone: string;
+  name: string;
+  roles: Role[];
+  isLead: boolean;
+  consentAt: string | null;
+  profile: { type: "person" | "company"; companyName: string; inn: string; kpp: string };
+};
 
 export class ApiError extends Error {
   constructor(
@@ -26,18 +47,13 @@ export class ApiError extends Error {
   }
 }
 
-export const tokenStore = {
-  get: () => SecureStore.getItemAsync(TOKEN_KEY),
-  set: (t: string | null) => (t ? SecureStore.setItemAsync(TOKEN_KEY, t) : SecureStore.deleteItemAsync(TOKEN_KEY)),
-};
-
-export async function api<T>(method: "GET" | "POST" | "PATCH", path: string, body?: object): Promise<T> {
-  const t = await tokenStore.get();
+export async function api<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: object): Promise<T> {
+  const token = await storage.get(TOKEN_KEY);
   let res: Response;
   try {
-    res = await fetch(baseUrl() + path, {
+    res = await fetch(apiBase() + path, {
       method,
-      headers: { ...(body ? { "content-type": "application/json" } : {}), ...(t ? { authorization: `Bearer ${t}` } : {}) },
+      headers: { ...(body ? { "content-type": "application/json" } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -47,3 +63,5 @@ export async function api<T>(method: "GET" | "POST" | "PATCH", path: string, bod
   if (!res.ok) throw new ApiError(res.status, data.error?.code ?? "unknown", data.error?.message ?? "Ошибка сервера");
   return data as T;
 }
+
+export const errorText = (e: unknown) => (e instanceof ApiError ? e.message : "Что-то пошло не так");

@@ -175,3 +175,42 @@ export function startPriceRub(key: string, markupPercent = START_MARKUP_PERCENT)
   const market = MARKET_PRICES_RUB[key];
   return market === undefined ? null : roundPriceRub(market * (1 + markupPercent / 100));
 }
+
+/**
+ * Главная работа направления: её цену показываем на карточке направления («Шпаклёвка от 610 ₽/м²»),
+ * а не самую дешёвую позицию — «Ремонт под ключ от 390 ₽» за демонтаж ввёл бы клиента в заблуждение.
+ */
+export const HEADLINE_SERVICES: Record<Exclude<Category, "general">, { key: string; label: string }> = {
+  turnkey: { key: "turnkey-cosmetic", label: "Косметический ремонт" },
+  finishing: { key: "finishing-putty", label: "Шпаклёвка" },
+  floors: { key: "floors-tile", label: "Плитка" },
+  facade: { key: "facade-plaster", label: "Штукатурка фасада" },
+  electric: { key: "electric-socket", label: "Розетка" },
+  plumbing: { key: "plumbing-mixer", label: "Смеситель" },
+  climate: { key: "climate-mount-small", label: "Монтаж" },
+  vent: { key: "vent-fan", label: "Вентилятор" },
+};
+
+/** Примеры работ направления — для карточек на сайте и в приложении. */
+export const CATEGORY_WORKS: Record<Exclude<Category, "general">, string[]> = {
+  turnkey: ["Квартиры и дома", "Санузлы", "Офисы и магазины"],
+  finishing: ["Штукатурка и шпаклёвка", "Покраска и обои", "Гипсокартон"],
+  floors: ["Стяжка", "Ламинат и кварцвинил", "Плитка на пол и стены"],
+  facade: ["Штукатурка и покраска", "Утепление", "Межпанельные швы"],
+  electric: ["Замена проводки", "Щиты, автоматы, УЗО", "Розетки и свет"],
+  plumbing: ["Разводка труб", "Радиаторы отопления", "Сантехприборы"],
+  climate: ["Продажа и монтаж", "Чистка и ТО", "Заправка фреоном"],
+  vent: ["Вытяжные вентиляторы", "Воздуховоды", "Приточные клапаны"],
+};
+
+/** «от 610 ₽/м²»: поштучные позиции — без «/шт». */
+export function priceFromText(price: number, unit: Unit): string {
+  const per = unit === "pcs" || unit === "visit" || unit === "point" ? "" : `/${UNIT_LABELS[unit]}`;
+  return `от ${formatRubShort(price)}${per}`;
+}
+
+function formatRubShort(k: number): string {
+  return `${Math.round(k / 100)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, " ")} ₽`;
+}

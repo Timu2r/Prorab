@@ -40,6 +40,7 @@ export const schemas = {
       companyName: z.string().trim().max(200),
       inn,
       kpp: z.string().regex(/^(\d{9})?$/, "КПП — 9 цифр"),
+      consent: z.literal(true),
     })
     .partial(),
   deleteMe: z.object({ confirm: z.literal(true, { error: "Подтвердите удаление аккаунта" }) }),

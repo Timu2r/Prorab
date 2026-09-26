@@ -312,6 +312,11 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
       );
     `,
   },
+  {
+    // Согласие на обработку персональных данных при первом входе в приложение (docs/TZ.md, 9.1)
+    id: 6,
+    sql: () => `ALTER TABLE users ADD COLUMN consent_at timestamptz;`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

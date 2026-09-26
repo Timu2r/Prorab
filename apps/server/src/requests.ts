@@ -214,6 +214,8 @@ export class RequestService {
       );
       if (n >= 3) throw new ApiError(429, "too_many", "Вы уже оставили заявку. Мы перезвоним");
       const clientId = await upsertClient(q, phone, input.name);
+      // Согласие дано в форме на сайте
+      await q.query(`UPDATE users SET consent_at = COALESCE(consent_at, now()) WHERE id = $1`, [clientId]);
       const id = newId("req");
       const utm = input.utm && Object.keys(input.utm).length ? JSON.stringify(input.utm) : null;
       const [{ number }] = await q.query<{ number: number }>(

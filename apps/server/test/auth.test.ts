@@ -44,6 +44,18 @@ describe("вход по коду", () => {
 });
 
 describe("профиль", () => {
+  it("согласие на обработку данных при первом входе; заявка с сайта считается согласием", async () => {
+    const token = await t.login(CLIENT);
+    expect((await t.call("GET", "/me", token)).body.user.consentAt).toBeNull();
+    expect((await t.call("PATCH", "/me", token, { consent: false })).status).toBe(400);
+    const me = (await t.call("PATCH", "/me", token, { name: "Ольга", consent: true })).body.user;
+    expect(me.consentAt).not.toBeNull();
+    await t.call("POST", "/public/leads", undefined, { name: "Пётр", phone: "+79990000077", category: "electric", consent: true });
+    const lead = await t.login("+79990000077");
+    expect((await t.call("GET", "/me", lead)).body.user).toMatchObject({ name: "Пётр" });
+    expect((await t.call("GET", "/me", lead)).body.user.consentAt).not.toBeNull();
+  });
+
   it("клиент-компания сохраняет название и ИНН", async () => {
     const token = await t.login(CLIENT);
     const r = await t.call("PATCH", "/me", token, { name: "Ольга", type: "company", companyName: "ООО Ромашка", inn: "7700000000" });
