@@ -1,5 +1,5 @@
 import { BRAND } from "@ks/core";
-import { Menu, X } from "lucide-react";
+import { Menu, Phone, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth";
@@ -7,14 +7,15 @@ import { useAuth } from "../auth";
 export function Logo() {
   return (
     <Link to="/" className="logo" aria-label={`${BRAND.name} — на главную`}>
+      {/* Знак — строительный отвес: нить и груз */}
       <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
         <rect width="32" height="32" rx="4" fill="var(--accent)" />
-        <path d="M9 24V9h14v15" fill="none" stroke="#fff" strokeWidth="3" strokeLinejoin="miter" />
-        <path d="M9 16h14" stroke="#fff" strokeWidth="2" strokeOpacity="0.55" />
+        <path d="M16 5v8" stroke="#fff" strokeWidth="2" />
+        <path d="M11 13h10l-5 13z" fill="#fff" />
       </svg>
       <span>
         {BRAND.name}
-        <small>ремонт и стройка</small>
+        <small>{BRAND.tagline}</small>
       </span>
     </Link>
   );
@@ -55,6 +56,11 @@ export function SiteHeader() {
             <span className="only-lg">Оставить заявку</span>
             <span className="only-sm">Заявка</span>
           </a>
+          {BRAND.phone && (
+            <a className="menu-btn" href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`} aria-label={`Позвонить ${BRAND.phone}`}>
+              <Phone size={19} />
+            </a>
+          )}
           <button className="menu-btn" aria-label={open ? "Закрыть меню" : "Открыть меню"} aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? <X size={20} /> : <Menu size={20} />}
           </button>

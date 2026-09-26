@@ -219,6 +219,9 @@ describe("мастера и ставки", () => {
     const owner = await login(OWNER);
     const list = (await call("GET", "/services")).body.services;
     expect(list).toHaveLength(56);
+    // рыночные цены «от» проставлены всем позициям
+    expect(list.every((s: { price: number | null }) => s.price !== null)).toBe(true);
+    expect(list.find((s: { id: string }) => s.id === "svc_climate-mount-small").price).toBe(990_000);
     const s = await call("PATCH", `/admin/services/${list[0].id}`, owner, { price: 1_500_000 });
     expect(s.body.service.price).toBe(1_500_000);
     expect((await call("GET", "/services")).body.services[0].price).toBe(1_500_000);

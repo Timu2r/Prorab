@@ -58,15 +58,17 @@ export function HomePage() {
       .catch(() => {}); // без цен страница всё равно работает
   }, []);
 
-  // «от N ₽/м²» — самая низкая заданная цена в направлении
+  // Цена главной работы направления: «Шпаклёвка от 550 ₽/м²». Поштучные позиции — без «/шт».
   const priceFrom = useMemo(() => {
-    const min = new Map<Category, Service>();
-    for (const s of services) {
-      if (s.price === null) continue;
-      const cur = min.get(s.category);
-      if (!cur || s.price < cur.price!) min.set(s.category, s);
+    const byId = new Map(services.map((s) => [s.id, s]));
+    const out = new Map<Category, string>();
+    for (const d of DIRECTIONS) {
+      const s = byId.get(`svc_${d.headline.key}`);
+      if (!s || s.price === null) continue;
+      const per = s.unit === "pcs" || s.unit === "visit" || s.unit === "point" ? "" : `/${UNIT_LABELS[s.unit]}`;
+      out.set(d.category, `${d.headline.label} от ${formatRub(s.price)}${per}`);
     }
-    return new Map([...min].map(([c, s]) => [c, `от ${formatRub(s.price!)}/${UNIT_LABELS[s.unit]}`]));
+    return out;
   }, [services]);
 
   const tabServices = services.filter((s) => s.category === tab);
