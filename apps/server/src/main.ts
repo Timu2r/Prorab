@@ -16,6 +16,9 @@ if (!codeSecret) throw new Error("CODE_SECRET обязателен на боев
 if (production && env.DEV_CODES === "1") throw new Error("DEV_CODES=1 нельзя включать на боевом сервере");
 
 const dataDir = resolve(root, "data", "pg");
+const uploadsDir = env.UPLOADS_DIR || resolve(root, "data", "uploads");
+const fileSecret = env.FILE_SIGN_SECRET ?? (production ? "" : "dev-file-secret");
+if (!fileSecret) throw new Error("FILE_SIGN_SECRET обязателен на боевом сервере");
 if (!env.DATABASE_URL) mkdirSync(dataDir, { recursive: true });
 const db = await openDb({ url: env.DATABASE_URL || undefined, dataDir });
 await migrate(db);
@@ -26,6 +29,8 @@ const app = await buildApp(db, logSender, {
   codeSecret,
   webOrigins: (env.WEB_ORIGINS ?? "http://localhost:5190").split(",").map((s) => s.trim()),
   trustProxy: env.TRUST_PROXY === "1",
+  uploadsDir,
+  fileSecret,
 });
 
 const port = Number(env.PORT ?? 4100);

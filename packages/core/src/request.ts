@@ -92,6 +92,11 @@ export function unassignTarget(prepaid: boolean): RequestStatus {
   return prepaid ? "prepaid" : "agreed";
 }
 
+/** Передать задание другому мастеру (владелец или бригадир) можно, пока мастер не выехал. */
+export function canReassign(from: RequestStatus): boolean {
+  return from === "assigned" || from === "accepted";
+}
+
 export function canUnassign(from: RequestStatus, actor: Role): boolean {
   if (actor === "master") return from === "assigned";
   if (actor === "owner") return from === "assigned" || from === "accepted";

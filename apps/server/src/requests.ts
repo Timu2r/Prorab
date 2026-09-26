@@ -1,55 +1,40 @@
 import {
   canAssign,
+  canReassign,
   canTransition,
   canUnassign,
   formatRequestNumber,
   masterSeesContacts,
   normalizePhone,
+  requestResult,
   unassignTarget,
   type RequestStatus,
-  type Role,
 } from "@ks/core";
+import { isFinal, loadFor, loadRequest, masterInfo, mustBe, num, REQUEST_SELECT, type Actor, type RequestRow } from "./access";
 import type { User } from "./auth";
 import type { Db, Queryable } from "./db";
+import { approvedEstimate, clientEstimate, loadEstimates } from "./estimates";
+import { MAX_FILES_PER_REQUEST, type FileService } from "./files";
+import { logEvent, moveStatus, syncStatus, type By } from "./flow";
+import { clientInvoices, loadInvoices } from "./invoices";
+import { accruePayout, payForecast, type PayoutService } from "./payouts";
+import type { SettingsService } from "./settings";
+import { addMonths, moscowDate } from "./time";
 import { ApiError, newId } from "./util";
 
-type Row = {
-  id: string;
-  number: number;
-  client_id: string;
-  master_id: string | null;
-  category: string;
-  service_ids: string[];
-  description: string;
-  address: string;
-  district: string;
-  wanted_date: string | null;
-  wanted_slot: string;
-  source: string;
-  status: RequestStatus;
-  price_work: string | null; // bigint приходит строкой
-  price_goods: string | null;
-  prepaid_at: string | null;
-  cancel_reason: string;
-  created_at: string;
-  updated_at: string;
-  client_name: string;
-  client_phone: string;
-  master_name: string | null;
-  master_phone: string | null;
-};
+/** Через сколько дней после закрытия мастер перестаёт видеть адрес и телефон клиента (правило 2). */
+const CONTACTS_DAYS_AFTER_CLOSE = 30;
+const WORKING: RequestStatus[] = ["accepted", "en_route", "on_site", "done"];
+const RESULT_VISIBLE: RequestStatus[] = ["done", "act_signed", "paid", "closed"];
 
-const SELECT = `
-  SELECT r.*, to_char(r.wanted_date, 'YYYY-MM-DD') AS wanted_date,
-         c.name AS client_name, c.phone AS client_phone, m.name AS master_name, m.phone AS master_phone
-  FROM requests r
-  JOIN users c ON c.id = r.client_id
-  LEFT JOIN users m ON m.id = r.master_id
-  WHERE r.deleted_at IS NULL`;
+function contactsOpen(r: RequestRow): boolean {
+  if (!masterSeesContacts(r.status)) return false;
+  if (r.status === "closed" && r.closed_at && Date.now() - new Date(r.closed_at).getTime() > CONTACTS_DAYS_AFTER_CLOSE * 86_400_000) return false;
+  return true;
+}
 
-/** Как заявку видит каждая роль. Мастеру не отдаём цену для клиента никогда, а контакты клиента — только после принятия. */
-function view(r: Row, as: Role) {
-  const base = {
+function base(r: RequestRow) {
+  return {
     id: r.id,
     number: formatRequestNumber(r.number),
     status: r.status,
@@ -59,41 +44,57 @@ function view(r: Row, as: Role) {
     district: r.district,
     wantedDate: r.wanted_date,
     wantedSlot: r.wanted_slot,
+    visitAt: r.visit_at,
+    visitUntil: r.visit_until,
     createdAt: r.created_at,
   };
-  if (as === "master") {
-    const open = masterSeesContacts(r.status);
-    return {
-      ...base,
-      address: open ? r.address : null,
-      client: open ? { name: r.client_name, phone: r.client_phone } : null,
-    };
-  }
-  const money = {
-    priceWork: r.price_work === null ? null : Number(r.price_work),
-    priceGoods: r.price_goods === null ? null : Number(r.price_goods),
-  };
-  const master = r.master_id ? { id: r.master_id, name: r.master_name ?? "" } : null;
-  if (as === "client") return { ...base, ...money, address: r.address, cancelReason: r.cancel_reason, master };
+}
+
+const address = (r: RequestRow) => ({ address: r.address, apartment: r.apartment, entrance: r.entrance, floor: r.floor, intercom: r.intercom });
+
+/** Строка списка для владельца: всё. */
+function ownerItem(r: RequestRow) {
   return {
-    ...base,
-    ...money,
-    address: r.address,
+    ...base(r),
+    ...address(r),
     source: r.source,
-    prepaid: r.prepaid_at !== null,
-    cancelReason: r.cancel_reason,
     client: { id: r.client_id, name: r.client_name, phone: r.client_phone },
-    master: master && { ...master, phone: r.master_phone ?? "" },
+    master: r.master_id ? { id: r.master_id, name: r.master_name ?? "", phone: r.master_phone ?? "" } : null,
+    priceWork: num(r.price_work),
+    priceGoods: num(r.price_goods),
+    prepaid: r.prepaid_at !== null,
+    refundRequired: r.refund_required,
+    cancelReason: r.cancel_reason,
+    warrantyUntil: r.warranty_until,
     updatedAt: r.updated_at,
   };
 }
 
-/** В какой роли пользователь действует с этой заявкой. null — заявка не его. */
-function actorFor(user: User, r: Row): Role | null {
-  if (user.roles.includes("owner")) return "owner";
-  if (user.roles.includes("master") && r.master_id === user.id) return "master";
-  if (r.client_id === user.id) return "client";
-  return null;
+/** Строка списка для клиента: его суммы и имя мастера. */
+function clientItem(r: RequestRow) {
+  return {
+    ...base(r),
+    ...address(r),
+    priceWork: num(r.price_work),
+    priceGoods: num(r.price_goods),
+    master: r.master_id ? { name: r.master_name ?? "" } : null,
+    cancelReason: r.cancel_reason,
+    warrantyUntil: r.warranty_until,
+    rating: r.rating,
+  };
+}
+
+/** Строка списка для мастера и бригадира: никаких цен клиента (правило 1), контакты — после «Принять» (правило 2). */
+function masterItem(r: RequestRow, me: string, pay: number | null) {
+  const open = contactsOpen(r);
+  return {
+    ...base(r),
+    ...(open ? address(r) : { address: null, apartment: null, entrance: null, floor: null, intercom: null }),
+    client: open ? { name: r.client_name, phone: r.client_phone } : null,
+    pay,
+    mine: r.master_id === me,
+    assignedTo: r.master_id ? { id: r.master_id, name: r.master_name ?? "" } : null,
+  };
 }
 
 export type NewRequest = {
@@ -101,63 +102,100 @@ export type NewRequest = {
   serviceIds: string[];
   description: string;
   address: string;
+  apartment: string;
+  entrance: string;
+  floor: string;
+  intercom: string;
   district: string;
   wantedDate: string | null;
   wantedSlot: string;
-  source: "site" | "app" | "call";
+  source?: string;
   clientPhone?: string;
   clientName?: string;
 };
 
+export type ListFilter = { status?: string[]; category?: string; masterId?: string; source?: string; from?: string; to?: string; q?: string };
+
+export type RequestPatch = Partial<{
+  category: string;
+  description: string;
+  address: string;
+  apartment: string;
+  entrance: string;
+  floor: string;
+  intercom: string;
+  district: string;
+  wantedDate: string | null;
+  wantedSlot: string;
+  visitAt: string | null;
+  visitUntil: string | null;
+  serviceIds: string[];
+  ownerNote: string;
+}>;
+
+const PATCH_COLUMNS: Record<string, string> = {
+  category: "category",
+  description: "description",
+  address: "address",
+  apartment: "apartment",
+  entrance: "entrance",
+  floor: "floor",
+  intercom: "intercom",
+  district: "district",
+  wantedDate: "wanted_date",
+  wantedSlot: "wanted_slot",
+  visitAt: "visit_at",
+  visitUntil: "visit_until",
+  serviceIds: "service_ids",
+  ownerNote: "owner_note",
+};
+
 export class RequestService {
-  constructor(private db: Db) {}
+  constructor(
+    private db: Db,
+    private files: FileService,
+    private payouts: PayoutService,
+    private settings: SettingsService,
+  ) {}
 
-  private async load(q: Queryable, id: string): Promise<Row> {
-    const [r] = await q.query<Row>(`${SELECT} AND r.id = $1`, [id]);
-    if (!r) throw new ApiError(404, "not_found", "Заявка не найдена");
-    return r;
-  }
-
-  private async loadFor(q: Queryable, user: User, id: string): Promise<{ r: Row; as: Role }> {
-    const r = await this.load(q, id);
-    const as = actorFor(user, r);
-    if (!as) throw new ApiError(404, "not_found", "Заявка не найдена"); // чужую заявку не отличаем от несуществующей
-    return { r, as };
-  }
-
-  private async event(q: Queryable, requestId: string, user: User, as: Role, kind: string, payload: object = {}) {
-    await q.query(
-      `INSERT INTO request_events (id, request_id, actor_id, actor_role, kind, payload) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [newId("evt"), requestId, user.id, as, kind, JSON.stringify(payload)],
-    );
-  }
+  // ---------- создание ----------
 
   async create(user: User, input: NewRequest) {
     const isOwner = user.roles.includes("owner");
-    return this.db.tx(async (q) => {
+    const id = await this.db.tx(async (q) => {
       let clientId = user.id;
-      let source = input.source;
+      let source = "app";
       if (isOwner && input.clientPhone) {
-        // Заявка по звонку: клиент заводится по телефону, если его ещё нет.
         const phone = normalizePhone(input.clientPhone);
         if (!phone) throw new ApiError(400, "bad_phone", "Неверный телефон клиента");
-        const [existing] = await q.query<{ id: string }>(`SELECT id FROM users WHERE phone = $1`, [phone]);
-        clientId =
-          existing?.id ??
-          (await q.query<{ id: string }>(`INSERT INTO users (id, phone, name) VALUES ($1, $2, $3) RETURNING id`, [newId("usr"), phone, input.clientName ?? ""]))[0].id;
-        source = "call";
-      } else if (source === "call") {
-        source = "app";
+        clientId = await upsertClient(q, phone, input.clientName ?? "");
+        source = input.source ?? "call";
       }
       const id = newId("req");
       await q.query(
-        `INSERT INTO requests (id, client_id, category, service_ids, description, address, district, wanted_date, wanted_slot, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [id, clientId, input.category, input.serviceIds, input.description, input.address, input.district, input.wantedDate, input.wantedSlot, source],
+        `INSERT INTO requests (id, client_id, category, service_ids, description, address, apartment, entrance, floor, intercom, district, wanted_date, wanted_slot, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [
+          id,
+          clientId,
+          input.category,
+          input.serviceIds,
+          input.description,
+          input.address,
+          input.apartment,
+          input.entrance,
+          input.floor,
+          input.intercom,
+          input.district,
+          input.wantedDate,
+          input.wantedSlot,
+          source,
+        ],
       );
-      await this.event(q, id, user, isOwner ? "owner" : "client", "created", { source });
-      return view(await this.load(q, id), isOwner ? "owner" : "client");
+      await logEvent(q, id, { userId: user.id, role: isOwner ? "owner" : "client" }, "created", { source });
+      return id;
     });
+    return this.get(user, id);
   }
 
   /**
@@ -165,7 +203,7 @@ export class RequestService {
    * Адрес и детали владелец уточняет по телефону. Клиент заводится по номеру; войти в кабинет
    * он сможет позже по коду на этот же номер и увидит там свою заявку.
    */
-  async createLead(input: { name: string; phone: string; category: string; comment: string }) {
+  async createLead(input: { name: string; phone: string; category: string; comment: string; utm?: Record<string, string> }) {
     const phone = normalizePhone(input.phone);
     if (!phone) throw new ApiError(400, "bad_phone", "Введите мобильный номер, например +7 999 123-45-67");
     return this.db.tx(async (q) => {
@@ -175,142 +213,453 @@ export class RequestService {
         [phone],
       );
       if (n >= 3) throw new ApiError(429, "too_many", "Вы уже оставили заявку. Мы перезвоним");
-      const [existing] = await q.query<{ id: string; name: string }>(`SELECT id, name FROM users WHERE phone = $1 AND deleted_at IS NULL`, [phone]);
-      let clientId: string;
-      if (existing) {
-        clientId = existing.id;
-        if (!existing.name) await q.query(`UPDATE users SET name = $1 WHERE id = $2`, [input.name, clientId]);
-      } else {
-        clientId = newId("usr");
-        await q.query(`INSERT INTO users (id, phone, name) VALUES ($1, $2, $3)`, [clientId, phone, input.name]);
-      }
+      const clientId = await upsertClient(q, phone, input.name);
       const id = newId("req");
+      const utm = input.utm && Object.keys(input.utm).length ? JSON.stringify(input.utm) : null;
       const [{ number }] = await q.query<{ number: number }>(
-        `INSERT INTO requests (id, client_id, category, description, source, consent_at) VALUES ($1, $2, $3, $4, 'site', now()) RETURNING number`,
-        [id, clientId, input.category, input.comment],
+        `INSERT INTO requests (id, client_id, category, description, source, consent_at, utm) VALUES ($1, $2, $3, $4, 'site', now(), $5) RETURNING number`,
+        [id, clientId, input.category, input.comment, utm],
       );
-      await q.query(
-        `INSERT INTO request_events (id, request_id, actor_id, actor_role, kind, payload) VALUES ($1, $2, $3, 'client', 'created', '{"source":"site"}')`,
-        [newId("evt"), id, clientId],
-      );
+      await logEvent(q, id, { userId: clientId, role: "client" }, "created", { source: "site" });
       return { number: formatRequestNumber(number) };
     });
   }
 
-  async list(user: User, status?: string) {
+  // ---------- списки ----------
+
+  /** Владелец — все с фильтрами; бригадир — задания команды; мастер — свои задания; клиент — свои заявки. */
+  async list(user: User, f: ListFilter = {}) {
     const params: unknown[] = [];
-    let where = "";
-    let as: Role;
+    const where: string[] = [];
+    const add = (sql: string, ...values: unknown[]) => {
+      for (const v of values) params.push(v);
+      where.push(sql.replace(/\$(\d+)/g, (_, i) => `$${params.length - values.length + Number(i)}`));
+    };
+    let as: Actor;
+    const mi = await masterInfo(this.db, user);
     if (user.roles.includes("owner")) as = "owner";
-    else if (user.roles.includes("master")) {
+    else if (mi) {
       as = "master";
-      params.push(user.id);
-      where += ` AND r.master_id = $${params.length}`;
+      add(`r.master_id = ANY($1::text[])`, mi.team);
     } else {
       as = "client";
-      params.push(user.id);
-      where += ` AND r.client_id = $${params.length}`;
+      add(`r.client_id = $1`, user.id);
     }
-    if (status) {
-      params.push(status);
-      where += ` AND r.status = $${params.length}`;
+    if (f.status?.length) add(`r.status = ANY($1::text[])`, f.status);
+    if (as === "owner") {
+      if (f.category) add(`r.category = $1`, f.category);
+      if (f.masterId) add(`r.master_id = $1`, f.masterId);
+      if (f.source) add(`r.source = $1`, f.source);
+      if (f.from) add(`r.created_at >= $1::date`, f.from);
+      if (f.to) add(`r.created_at < ($1::date + 1)`, f.to);
+      const text = f.q?.trim();
+      if (text) {
+        const digits = text.replace(/\D/g, "");
+        if (digits) add(`(c.name ILIKE $1 OR r.address ILIKE $1 OR c.phone LIKE $2 OR r.number = $3)`, `%${text}%`, `%${digits}%`, Number(digits.slice(-9)));
+        else add(`(c.name ILIKE $1 OR r.address ILIKE $1)`, `%${text}%`);
+      }
     }
-    const rows = await this.db.query<Row>(`${SELECT}${where} ORDER BY r.created_at DESC LIMIT 200`, params);
-    return rows.map((r) => view(r, as));
+    const order = as === "master" ? `r.visit_at ASC NULLS LAST, r.created_at DESC` : `r.created_at DESC`;
+    const rows = await this.db.query<RequestRow>(`${REQUEST_SELECT}${where.map((w) => ` AND ${w}`).join("")} ORDER BY ${order} LIMIT 300`, params);
+    if (as === "owner") return rows.map(ownerItem);
+    if (as === "client") return rows.map(clientItem);
+    return this.masterItems(this.db, user, rows);
   }
 
-  /** Мастер, который тоже заказывал как клиент, видит свои заказы отдельно от заданий. */
-  async listAsClient(user: User) {
-    const rows = await this.db.query<Row>(`${SELECT} AND r.client_id = $1 ORDER BY r.created_at DESC LIMIT 200`, [user.id]);
-    return rows.map((r) => view(r, "client"));
+  private async masterItems(q: Queryable, user: User, rows: RequestRow[]) {
+    const pay = new Map<string, number | null>();
+    const byMaster = new Map<string, string[]>();
+    for (const r of rows) if (r.master_id) byMaster.set(r.master_id, [...(byMaster.get(r.master_id) ?? []), r.id]);
+    for (const [masterId, ids] of byMaster) for (const [id, v] of await payForecast(q, masterId, ids)) pay.set(id, v);
+    return rows.map((r) => masterItem(r, user.id, pay.get(r.id) ?? null));
   }
+
+  /** Мастер, который сам заказывал как клиент, видит свои заказы отдельно от заданий. */
+  async listAsClient(user: User) {
+    const rows = await this.db.query<RequestRow>(`${REQUEST_SELECT} AND r.client_id = $1 ORDER BY r.created_at DESC LIMIT 300`, [user.id]);
+    return rows.map(clientItem);
+  }
+
+  // ---------- карточка ----------
 
   async get(user: User, id: string) {
-    const { r, as } = await this.loadFor(this.db, user, id);
-    const result: Record<string, unknown> = { ...view(r, as) };
+    return this.detail(this.db, user, id);
+  }
+
+  private fileViews = async (q: Queryable, requestId: string, kinds?: string[]) => {
+    const rows = await q.query<{ id: string; kind: string; uploaded_by: string; mime: string; created_at: Date }>(
+      `SELECT id, kind, uploaded_by, mime, created_at FROM files WHERE request_id = $1 AND deleted_at IS NULL ORDER BY created_at`,
+      [requestId],
+    );
+    return rows
+      .filter((f) => !kinds || kinds.includes(f.kind))
+      .map((f) => ({ id: f.id, kind: f.kind, url: this.files.url(f.id), uploadedBy: f.uploaded_by, createdAt: f.created_at }));
+  };
+
+  private async acts(q: Queryable, requestId: string) {
+    const rows = await q.query<{ accepted: boolean; remarks: string; method: string; file_id: string | null; signed_at: Date; signed_by: string }>(
+      `SELECT accepted, remarks, method, file_id, signed_at, signed_by FROM acts WHERE request_id = $1 ORDER BY signed_at`,
+      [requestId],
+    );
+    return rows.map((a) => ({
+      accepted: a.accepted,
+      remarks: a.remarks,
+      method: a.method,
+      fileUrl: a.file_id ? this.files.url(a.file_id) : null,
+      signedAt: a.signed_at,
+    }));
+  }
+
+  private async extraWork(q: Queryable, requestId: string) {
+    const rows = await q.query<{ at: Date; payload: { text: string; fileIds: string[] } }>(
+      `SELECT at, payload FROM request_events WHERE request_id = $1 AND kind = 'extra_work' ORDER BY at`,
+      [requestId],
+    );
+    return rows.map((e) => ({ at: e.at, text: e.payload.text, files: (e.payload.fileIds ?? []).map((f) => ({ id: f, url: this.files.url(f) })) }));
+  }
+
+  private async detail(q: Queryable, user: User, id: string) {
+    const { r, as } = await loadFor(q, user, id);
     if (as === "owner") {
-      result.events = await this.db.query(
+      const [estimates, invoices, files, acts, payouts, settings] = [
+        await loadEstimates(q, id),
+        await loadInvoices(q, id),
+        await this.fileViews(q, id),
+        await this.acts(q, id),
+        await this.payouts.forRequest(q, id),
+        await this.settings.get(q),
+      ];
+      const events = await q.query(
         `SELECT e.at, e.actor_role AS "actorRole", u.name AS "actorName", e.kind, e.payload
          FROM request_events e LEFT JOIN users u ON u.id = e.actor_id WHERE e.request_id = $1 ORDER BY e.at`,
         [id],
       );
+      const approved = estimates.find((e) => e.status === "approved");
+      const revenue = invoices.reduce((s, i) => s + (i.status === "paid" ? i.amount : 0), 0);
+      const paid = payouts.filter((p) => p.status !== "cancelled").reduce((s, p) => s + p.amount, 0);
+      const forecast = r.master_id ? (await payForecast(q, r.master_id, [id])).get(id) ?? null : null;
+      return {
+        ...ownerItem(r),
+        utm: r.utm,
+        ownerNote: r.owner_note,
+        rating: r.rating,
+        review: r.review,
+        doneAt: r.done_at,
+        closedAt: r.closed_at,
+        estimates,
+        invoices,
+        files,
+        acts,
+        extraWork: await this.extraWork(q, id),
+        payouts,
+        payForecast: forecast,
+        money: requestResult({ revenue, goodsCost: approved?.totals.cost ?? 0, payouts: paid }, settings.taxPercent),
+        events,
+      };
     }
-    return result;
+    if (as === "client") {
+      const showResult = RESULT_VISIBLE.includes(r.status);
+      return {
+        ...clientItem(r),
+        review: r.review,
+        estimates: (await loadEstimates(q, id)).filter((e) => e.status !== "draft").map(clientEstimate),
+        invoices: clientInvoices(await loadInvoices(q, id)),
+        files: await this.fileViews(q, id, showResult ? ["client_photo", "before", "after", "act_paper"] : ["client_photo"]),
+        acts: await this.acts(q, id),
+      };
+    }
+    // Мастер и бригадир: работы и материалы без цен, своя сумма
+    const est = await approvedEstimate(q, id);
+    const [item] = await this.masterItems(q, user, [r]);
+    return {
+      ...item,
+      works: (est?.items ?? []).filter((i) => i.kind === "work").map((i) => ({ name: i.name, unit: i.unit, qty: i.qty })),
+      materials: (est?.items ?? []).filter((i) => i.kind !== "work").map((i) => ({ id: i.id, name: i.name, unit: i.unit, qty: i.qty, usedQty: i.usedQty })),
+      files: await this.fileViews(q, id),
+      extraWork: await this.extraWork(q, id),
+      acts: await this.acts(q, id),
+      role: as,
+    };
   }
 
-  async update(user: User, id: string, patch: Partial<{ priceWork: number | null; priceGoods: number | null; description: string; address: string; district: string; wantedDate: string | null; wantedSlot: string; serviceIds: string[] }>) {
-    return this.db.tx(async (q) => {
-      const { r, as } = await this.loadFor(q, user, id);
-      if (as !== "owner") throw new ApiError(403, "forbidden", "Изменять заявку может только владелец");
-      if (r.status === "closed" || r.status === "cancelled") throw new ApiError(409, "final", "Заявка уже закрыта");
-      const cols: Record<string, string> = {
-        priceWork: "price_work",
-        priceGoods: "price_goods",
-        description: "description",
-        address: "address",
-        district: "district",
-        wantedDate: "wanted_date",
-        wantedSlot: "wanted_slot",
-        serviceIds: "service_ids",
-      };
+  // ---------- изменения владельцем ----------
+
+  async update(user: User, id: string, patch: RequestPatch) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "owner");
+      if (isFinal(r)) throw new ApiError(409, "final", "Заявка уже закрыта");
+      if (patch.category !== undefined && patch.category !== r.category && !["new", "agreed"].includes(r.status))
+        throw new ApiError(409, "category_locked", "Направление меняется только до назначения мастера");
+      const visitAt = patch.visitAt !== undefined ? patch.visitAt : r.visit_at;
+      const visitUntil = patch.visitUntil !== undefined ? patch.visitUntil : r.visit_until;
+      if (visitAt && visitUntil && new Date(visitUntil) <= new Date(visitAt)) throw new ApiError(400, "bad_visit", "Окончание визита раньше начала");
       const sets: string[] = [];
       const params: unknown[] = [];
       for (const [k, v] of Object.entries(patch)) {
-        if (v === undefined || !(k in cols)) continue;
+        if (v === undefined || !(k in PATCH_COLUMNS)) continue;
         params.push(v);
-        sets.push(`${cols[k]} = $${params.length}`);
+        sets.push(`${PATCH_COLUMNS[k]} = $${params.length}`);
       }
-      if (sets.length) {
-        params.push(id);
-        await q.query(`UPDATE requests SET ${sets.join(", ")}, updated_at = now() WHERE id = $${params.length}`, params);
-        await this.event(q, id, user, as, "updated", patch);
-      }
-      return view(await this.load(q, id), as);
+      if (!sets.length) return;
+      params.push(id);
+      await q.query(`UPDATE requests SET ${sets.join(", ")}, updated_at = now() WHERE id = $${params.length}`, params);
+      await logEvent(q, id, { userId: user.id, role: "owner" }, "updated", patch);
     });
+    return this.get(user, id);
   }
+
+  // ---------- статусы ----------
 
   async setStatus(user: User, id: string, to: RequestStatus, reason: string) {
-    return this.db.tx(async (q) => {
-      const { r, as } = await this.loadFor(q, user, id);
-      if (!canTransition(r.status, to, as))
-        throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
-      if (to === "cancelled" && !reason.trim()) throw new ApiError(400, "reason_required", "Укажите причину отмены");
-      if (to === "agreed" && r.price_work === null) throw new ApiError(400, "price_required", "Сначала укажите стоимость работ");
-      await q.query(
-        `UPDATE requests SET status = $1, updated_at = now(),
-           prepaid_at = CASE WHEN $1 = 'prepaid' THEN now() ELSE prepaid_at END,
-           cancel_reason = CASE WHEN $1 = 'cancelled' THEN $2 ELSE cancel_reason END
-         WHERE id = $3`,
-        [to, reason.trim(), id],
-      );
-      await this.event(q, id, user, as, "status", { from: r.status, to, ...(reason ? { reason } : {}) });
-      return view(await this.load(q, id), as);
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      if (as === "lead" || !canTransition(r.status, to, as)) throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
+      const by: By = { userId: user.id, role: as };
+      if (to === "cancelled") {
+        if (!reason.trim()) throw new ApiError(400, "reason_required", "Укажите причину отмены");
+        const [{ n }] = await q.query<{ n: number }>(`SELECT count(*)::int AS n FROM invoices WHERE request_id = $1 AND status = 'paid'`, [id]);
+        await q.query(`UPDATE requests SET cancel_reason = $1, refund_required = $2 WHERE id = $3`, [reason.trim(), n > 0, id]);
+        await moveStatus(q, id, r.status, to, by, { reason: reason.trim() });
+        return;
+      }
+      await this.checkEnter(q, r, to);
+      await moveStatus(q, id, r.status, to, by);
+      if (to === "closed") await this.onClose(q, id, by);
+      await syncStatus(q, id, by);
     });
+    return this.get(user, id);
   }
 
+  /** Условия входа в статус (docs/TZ.md, раздел 5). */
+  private async checkEnter(q: Queryable, r: RequestRow, to: RequestStatus) {
+    const invoices = (await loadInvoices(q, r.id)).filter((i) => i.status === "sent" || i.status === "paid");
+    const materials = invoices.filter((i) => i.kind === "materials");
+    if (to === "agreed" && !(await approvedEstimate(q, r.id))) throw new ApiError(400, "estimate_required", "Сначала согласуйте смету");
+    if (to === "invoiced" && !materials.length) throw new ApiError(400, "invoice_required", "Сначала выставьте счёт на материалы");
+    if (to === "prepaid" && !(materials.length && materials.every((i) => i.status === "paid")))
+      throw new ApiError(400, "payment_required", "Счёт на материалы ещё не оплачен");
+    if (to === "done") {
+      const kinds = await q.query<{ kind: string }>(`SELECT DISTINCT kind FROM files WHERE request_id = $1 AND deleted_at IS NULL`, [r.id]);
+      const has = (k: string) => kinds.some((x) => x.kind === k);
+      if (!has("before") || !has("after")) throw new ApiError(400, "photos_required", "Добавьте фото до и после работ");
+      const est = await approvedEstimate(q, r.id);
+      if (est?.items.some((i) => i.kind !== "work" && i.usedQty === null))
+        throw new ApiError(400, "materials_required", "Укажите, сколько материалов израсходовано");
+    }
+    if (to === "act_signed") {
+      const [act] = await q.query(`SELECT 1 FROM acts WHERE request_id = $1 AND accepted`, [r.id]);
+      if (!act) throw new ApiError(400, "act_required", "Нужна приёмка клиента или фото подписанного акта");
+    }
+    if (to === "paid" && !(invoices.some((i) => i.kind === "works" || i.kind === "full") && invoices.every((i) => i.status === "paid")))
+      throw new ApiError(400, "payment_required", "Не все счета оплачены или нет счёта на работы");
+  }
+
+  /** Закрытие: гарантия с сегодняшнего дня и начисление выплаты мастеру. */
+  private async onClose(q: Queryable, id: string, by: By) {
+    const { warrantyMonths } = await this.settings.get(q);
+    await q.query(`UPDATE requests SET warranty_until = $1::date WHERE id = $2`, [addMonths(moscowDate(), warrantyMonths), id]);
+    await accruePayout(q, await loadRequest(q, id), by);
+  }
+
+  // ---------- мастер ----------
+
+  /** Владелец назначает из «Согласована» или «Предоплата получена» и может передать другому до выезда; бригадир — только внутри своей команды. */
   async assign(user: User, id: string, masterId: string) {
-    return this.db.tx(async (q) => {
-      const { r, as } = await this.loadFor(q, user, id);
-      if (as !== "owner") throw new ApiError(403, "forbidden", "Назначать мастера может только владелец");
-      if (!canAssign(r.status)) throw new ApiError(409, "bad_transition", "Мастера можно назначить после согласования или предоплаты");
-      const [m] = await q.query<{ active: boolean }>(`SELECT active FROM masters WHERE user_id = $1`, [masterId]);
+    await this.db.tx(async (q) => {
+      const { r, as, mi } = await loadFor(q, user, id);
+      const [m] = await q.query<{ active: boolean; skills: string[] }>(`SELECT active, skills FROM masters WHERE user_id = $1`, [masterId]);
       if (!m || !m.active) throw new ApiError(400, "bad_master", "Мастер не найден или отключён");
-      await q.query(`UPDATE requests SET master_id = $1, status = 'assigned', updated_at = now() WHERE id = $2`, [masterId, id]);
-      await this.event(q, id, user, as, "assigned", { masterId });
-      return view(await this.load(q, id), as);
+      if (r.category !== "general" && !m.skills.includes(r.category)) throw new ApiError(400, "no_skill", "Мастер не работает по этому направлению");
+      if (masterId === r.master_id) throw new ApiError(409, "same_master", "Задание уже у этого мастера");
+      const by: By = { userId: user.id, role: as };
+      const leadOfJob = mi?.isLead && r.master_id !== null && mi.team.includes(r.master_id);
+      if (as === "owner" && canAssign(r.status)) {
+        await q.query(`UPDATE requests SET master_id = $1 WHERE id = $2`, [masterId, id]);
+        await moveStatus(q, id, r.status, "assigned", by);
+        await logEvent(q, id, by, "assigned", { masterId });
+      } else if ((as === "owner" || leadOfJob) && canReassign(r.status)) {
+        if (as !== "owner" && !mi!.team.includes(masterId)) throw new ApiError(403, "not_team", "Передать можно только мастеру своей команды");
+        await q.query(`UPDATE requests SET master_id = $1 WHERE id = $2`, [masterId, id]);
+        if (r.status !== "assigned") await moveStatus(q, id, r.status, "assigned", by);
+        await logEvent(q, id, by, "reassigned", { from: r.master_id, to: masterId });
+      } else if (as === "owner" || leadOfJob) throw new ApiError(409, "bad_transition", "Назначить мастера сейчас нельзя");
+      else throw new ApiError(403, "forbidden", "Это действие вам недоступно");
     });
+    return this.get(user, id);
   }
 
-  /** Отказ мастера от задания или снятие мастера владельцем. */
+  /**
+   * Отказ мастера от задания или снятие мастера. Если мастер из команды, задание возвращается бригадиру;
+   * иначе — владельцу: в «Предоплата получена», если предоплата была, или в «Согласована».
+   */
   async unassign(user: User, id: string, reason: string) {
     return this.db.tx(async (q) => {
-      const { r, as } = await this.loadFor(q, user, id);
-      if (!canUnassign(r.status, as)) throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
-      const to = unassignTarget(r.prepaid_at !== null);
-      await q.query(`UPDATE requests SET master_id = NULL, status = $1, updated_at = now() WHERE id = $2`, [to, id]);
-      await this.event(q, id, user, as, as === "master" ? "declined" : "unassigned", { masterId: r.master_id, reason });
-      // Мастер после отказа заявку больше не видит — отдаём ему только итог.
-      return as === "master" ? { ok: true } : view(await this.load(q, id), as);
+      const { r, as } = await loadFor(q, user, id);
+      const allowed = as === "master" ? canUnassign(r.status, "master") : as === "owner" || as === "lead" ? canUnassign(r.status, "owner") : false;
+      if (!allowed) throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
+      const by: By = { userId: user.id, role: as };
+      const [lead] =
+        as === "master"
+          ? await q.query<{ lead_id: string }>(
+              `SELECT m.lead_id FROM masters m JOIN masters l ON l.user_id = m.lead_id WHERE m.user_id = $1 AND l.active`,
+              [r.master_id],
+            )
+          : [];
+      if (lead?.lead_id) {
+        await q.query(`UPDATE requests SET master_id = $1 WHERE id = $2`, [lead.lead_id, id]);
+        if (r.status !== "assigned") await moveStatus(q, id, r.status, "assigned", by);
+        await logEvent(q, id, by, "declined", { masterId: r.master_id, reason, returnedTo: lead.lead_id });
+      } else {
+        await q.query(`UPDATE requests SET master_id = NULL WHERE id = $1`, [id]);
+        await moveStatus(q, id, r.status, unassignTarget(r.prepaid_at !== null), by, { reason });
+        await logEvent(q, id, by, as === "master" ? "declined" : "unassigned", { masterId: r.master_id, reason });
+      }
+      // Мастер после отказа заявку больше не видит — отдаём ему только итог
+      return as === "master" ? { ok: true } : this.detail(q, user, id);
     });
   }
+
+  /** Мастер сообщает о доп. работах: текст и фото. Владелец делает по ним новую версию сметы. */
+  async reportExtraWork(user: User, id: string, text: string, fileIds: string[]) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "master");
+      if (!WORKING.includes(r.status)) throw new ApiError(409, "bad_transition", "Сообщить о доп. работах можно только во время работы");
+      if (fileIds.length) {
+        const own = await q.query<{ id: string }>(
+          `SELECT id FROM files WHERE id = ANY($1::text[]) AND request_id = $2 AND uploaded_by = $3 AND kind = 'extra_work' AND deleted_at IS NULL`,
+          [fileIds, id, user.id],
+        );
+        if (own.length !== fileIds.length) throw new ApiError(400, "bad_file", "Фото не найдены");
+      }
+      await logEvent(q, id, { userId: user.id, role: "master" }, "extra_work", { text: text.trim(), fileIds });
+    });
+    return this.get(user, id);
+  }
+
+  /** Фактический расход материалов по позициям утверждённой сметы. */
+  async reportMaterials(user: User, id: string, items: { itemId: string; usedQty: number }[]) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "master");
+      if (!WORKING.includes(r.status)) throw new ApiError(409, "bad_transition", "Расход указывается во время работы");
+      const est = await approvedEstimate(q, id);
+      const allowed = new Set((est?.items ?? []).filter((i) => i.kind !== "work").map((i) => i.id));
+      for (const it of items) {
+        if (!allowed.has(it.itemId)) throw new ApiError(400, "bad_item", "Материал не найден в смете");
+        await q.query(`UPDATE estimate_items SET used_qty = $1 WHERE id = $2`, [it.usedQty, it.itemId]);
+      }
+      await logEvent(q, id, { userId: user.id, role: "master" }, "materials_reported", { items });
+    });
+    return this.get(user, id);
+  }
+
+  // ---------- приёмка ----------
+
+  /** Клиент принимает работу или пишет замечания. Принятие = подписание акта (условия работ на сайте). */
+  async act(user: User, id: string, accepted: boolean, remarks: string) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "client");
+      if (r.status !== "done") throw new ApiError(409, "bad_transition", "Принять можно после того, как мастер закончит работу");
+      if (!accepted && !remarks.trim()) throw new ApiError(400, "remarks_required", "Опишите замечания");
+      await q.query(`INSERT INTO acts (id, request_id, accepted, remarks, method, signed_by) VALUES ($1, $2, $3, $4, 'app', $5)`, [
+        newId("act"),
+        id,
+        accepted,
+        remarks.trim(),
+        user.id,
+      ]);
+      const by: By = { userId: user.id, role: "client" };
+      if (!accepted) return logEvent(q, id, by, "act_remarks", { remarks: remarks.trim() });
+      await moveStatus(q, id, r.status, "act_signed", by);
+      await logEvent(q, id, by, "act_signed", { method: "app" });
+      await syncStatus(q, id, by);
+    });
+    return this.get(user, id);
+  }
+
+  /** Владелец принимает работу по фото подписанного бумажного акта. */
+  async actPaper(user: User, id: string, fileId: string) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "owner");
+      if (r.status !== "done") throw new ApiError(409, "bad_transition", "Акт принимается после выполнения работ");
+      const [f] = await q.query(`SELECT 1 FROM files WHERE id = $1 AND request_id = $2 AND kind = 'act_paper' AND deleted_at IS NULL`, [fileId, id]);
+      if (!f) throw new ApiError(400, "bad_file", "Загрузите фото подписанного акта");
+      await q.query(`INSERT INTO acts (id, request_id, accepted, method, file_id, signed_by) VALUES ($1, $2, true, 'paper', $3, $4)`, [
+        newId("act"),
+        id,
+        fileId,
+        user.id,
+      ]);
+      const by: By = { userId: user.id, role: "owner" };
+      await moveStatus(q, id, r.status, "act_signed", by);
+      await logEvent(q, id, by, "act_signed", { method: "paper" });
+      await syncStatus(q, id, by);
+    });
+    return this.get(user, id);
+  }
+
+  async review(user: User, id: string, rating: number, text: string) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "client");
+      if (r.status !== "closed") throw new ApiError(409, "not_closed", "Оценить можно после закрытия заявки");
+      await q.query(`UPDATE requests SET rating = $1, review = $2 WHERE id = $3`, [rating, text.trim(), id]);
+      await logEvent(q, id, { userId: user.id, role: "client" }, "review", { rating });
+    });
+    return this.get(user, id);
+  }
+
+  // ---------- фото ----------
+
+  /** Кто какие фото загружает (docs/TZ.md, 8.3). */
+  async upload(user: User, id: string, kind: string, image: { mime: string; data: Buffer }) {
+    return this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      const allowed: Record<Actor, string[]> = {
+        client: ["client_photo"],
+        master: ["before", "after", "extra_work", "act_paper"],
+        owner: ["client_photo", "before", "after", "extra_work", "act_paper"],
+        lead: [],
+      };
+      if (!allowed[as].includes(kind)) throw new ApiError(403, "forbidden", "Этот вид фото вам недоступен");
+      if (isFinal(r)) throw new ApiError(409, "final", "Заявка уже закрыта");
+      if (as === "master" && !WORKING.includes(r.status)) throw new ApiError(409, "bad_transition", "Фото добавляются во время работы");
+      const [{ n }] = await q.query<{ n: number }>(`SELECT count(*)::int AS n FROM files WHERE request_id = $1 AND deleted_at IS NULL`, [id]);
+      if (n >= MAX_FILES_PER_REQUEST) throw new ApiError(409, "too_many_files", `Не больше ${MAX_FILES_PER_REQUEST} фото на заявку`);
+      const fileId = await this.files.save(q, { requestId: id, payoutId: null, uploadedBy: user.id, kind, mime: image.mime, data: image.data });
+      await logEvent(q, id, { userId: user.id, role: as }, "file_added", { fileId, kind });
+      return { id: fileId, kind, url: this.files.url(fileId) };
+    });
+  }
+
+  async deleteFile(user: User, fileId: string) {
+    await this.db.tx(async (q) => {
+      const [f] = await q.query<{ request_id: string | null; uploaded_by: string }>(
+        `SELECT request_id, uploaded_by FROM files WHERE id = $1 AND deleted_at IS NULL`,
+        [fileId],
+      );
+      if (!f || !f.request_id) throw new ApiError(404, "not_found", "Фото не найдено");
+      const { r, as } = await loadFor(q, user, f.request_id);
+      if (as !== "owner" && f.uploaded_by !== user.id) throw new ApiError(403, "forbidden", "Удалить можно только своё фото");
+      if (isFinal(r)) throw new ApiError(409, "final", "Заявка уже закрыта");
+      await q.query(`UPDATE files SET deleted_at = now() WHERE id = $1`, [fileId]);
+    });
+    return { ok: true };
+  }
+}
+
+/** Клиент по номеру: находит или заводит, имя дописывает, если его не было. */
+async function upsertClient(q: Queryable, phone: string, name: string): Promise<string> {
+  const [existing] = await q.query<{ id: string; name: string }>(`SELECT id, name FROM users WHERE phone = $1 AND deleted_at IS NULL`, [phone]);
+  if (existing) {
+    if (!existing.name && name) await q.query(`UPDATE users SET name = $1 WHERE id = $2`, [name, existing.id]);
+    return existing.id;
+  }
+  const id = newId("usr");
+  await q.query(`INSERT INTO users (id, phone, name) VALUES ($1, $2, $3)`, [id, phone, name]);
+  return id;
 }

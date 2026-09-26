@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  canReassign,
+  defaultInvoiceAmount,
+  estimateTotals,
+  lineTotal,
+  requestResult,
   DEFAULT_SERVICES,
   MARKET_PRICES_RUB,
   roundPriceRub,
@@ -132,5 +137,49 @@ describe("стартовые цены", () => {
     expect(roundPriceRub(333)).toBe(330);
     expect(roundPriceRub(1_650)).toBe(1_700);
     expect(roundPriceRub(16_390)).toBe(16_500);
+  });
+});
+
+describe("смета", () => {
+  const lines = [
+    { kind: "work" as const, qty: 12.5, price: 61_000 }, // шпаклёвка 12,5 м² по 610 ₽
+    { kind: "material" as const, qty: 3, price: 90_000, cost: 70_000, usedQty: 2 },
+    { kind: "equipment" as const, qty: 1, price: 4_500_000, cost: 4_000_000 },
+  ];
+  it("итоги по видам и себестоимость по факту расхода", () => {
+    expect(estimateTotals(lines, 10)).toEqual({
+      work: 762_500,
+      materials: 270_000,
+      equipment: 4_500_000,
+      goods: 4_770_000,
+      total: 5_532_500,
+      reserve: 553_250,
+      cost: 4_140_000, // 2 × 700 ₽ + 40 000 ₽
+    });
+  });
+  it("сумма счёта по умолчанию", () => {
+    const t = estimateTotals(lines);
+    expect(defaultInvoiceAmount("materials", t)).toBe(4_770_000);
+    expect(defaultInvoiceAmount("works", t)).toBe(762_500);
+    expect(defaultInvoiceAmount("full", t)).toBe(5_532_500);
+    expect(defaultInvoiceAmount("other", t)).toBeNull();
+  });
+  it("дробное количество считается до копейки", () => {
+    expect(lineTotal(33_333, 1.5)).toBe(50_000);
+    expect(masterPay({ mode: "fixed", prices: { a: 33_333 } }, [{ serviceId: "a", qty: 1.5, clientPrice: 0 }])).toBe(50_000);
+  });
+  it("деньги по заявке по факту", () => {
+    expect(requestResult({ revenue: 7_000_000, goodsCost: 4_000_000, payouts: 1_200_000 })).toEqual({
+      revenue: 7_000_000,
+      goodsCost: 4_000_000,
+      payouts: 1_200_000,
+      tax: 420_000,
+      profit: 1_380_000,
+    });
+  });
+  it("передать задание можно до выезда мастера", () => {
+    expect(canReassign("assigned")).toBe(true);
+    expect(canReassign("accepted")).toBe(true);
+    expect(canReassign("en_route")).toBe(false);
   });
 });

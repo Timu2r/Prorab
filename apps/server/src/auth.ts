@@ -109,13 +109,41 @@ export class AuthService {
   }
 
   async userByToken(token: string): Promise<(User & { sessionId: string }) | null> {
-    const [row] = await this.db.query<User & { sessionId: string }>(
-      `SELECT u.id, u.phone, u.name, u.roles, s.id AS "sessionId"
+    const [row] = await this.db.query<User & { sessionId: string; fresh: boolean }>(
+      `SELECT u.id, u.phone, u.name, u.roles, s.id AS "sessionId",
+              (s.last_used_at IS NOT NULL AND s.last_used_at > now() - interval '5 minutes') AS fresh
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.deleted_at IS NULL`,
       [sha256(token)],
     );
-    return row ?? null;
+    if (!row) return null;
+    // Отметка активности — не чаще раза в 5 минут, чтобы не писать в базу на каждый запрос
+    if (!row.fresh) {
+      await this.db.query(`UPDATE sessions SET last_used_at = now() WHERE id = $1`, [row.sessionId]);
+      await this.db.query(`UPDATE users SET last_seen_at = now() WHERE id = $1`, [row.id]);
+    }
+    const { fresh: _fresh, ...user } = row;
+    return user;
+  }
+
+  /**
+   * Удаление аккаунта (требование магазинов приложений): имя и телефон обезличиваются, сессии закрываются,
+   * заказы и деньги остаются для учёта. Владельца и мастера с незакрытыми заданиями удалить нельзя.
+   */
+  async deleteAccount(user: User): Promise<void> {
+    if (user.roles.includes("owner")) throw new ApiError(409, "owner", "Аккаунт владельца удалить нельзя");
+    await this.db.tx(async (q) => {
+      const [{ n }] = await q.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM requests WHERE master_id = $1 AND status IN ('assigned', 'accepted', 'en_route', 'on_site', 'done')`,
+        [user.id],
+      );
+      if (n) throw new ApiError(409, "active_jobs", "Сначала завершите или передайте свои задания");
+      await q.query(`UPDATE users SET name = '', phone = $2, deleted_at = now() WHERE id = $1`, [user.id, `deleted:${user.id}`]);
+      await q.query(`UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [user.id]);
+      await q.query(`DELETE FROM client_profiles WHERE user_id = $1`, [user.id]);
+      await q.query(`UPDATE masters SET active = false WHERE user_id = $1`, [user.id]);
+      await q.query(`DELETE FROM push_tokens WHERE user_id = $1`, [user.id]);
+    });
   }
 
   async logout(sessionId: string) {

@@ -140,6 +140,178 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
         .map(([key, rub]) => `UPDATE services SET price = ${startPriceRub(key, 10)! * 100} WHERE id = 'svc_${key}' AND price = ${rub * 100};`)
         .join("\n"),
   },
+  {
+    // Версия 1.0 (docs/TZ.md, раздел 7): сметы, счета, приёмка, фото, выплаты, бригады, клиенты, SMS, настройки
+    id: 5,
+    sql: () => `
+      ALTER TABLE users ADD COLUMN last_seen_at timestamptz;
+      ALTER TABLE login_codes ADD COLUMN provider_ref text;
+      ALTER TABLE sessions ADD COLUMN last_used_at timestamptz;
+
+      CREATE TABLE client_profiles (
+        user_id      text PRIMARY KEY REFERENCES users(id),
+        type         text NOT NULL DEFAULT 'person' CHECK (type IN ('person', 'company')),
+        company_name text NOT NULL DEFAULT '',
+        inn          text NOT NULL DEFAULT '',
+        kpp          text NOT NULL DEFAULT '',
+        note         text NOT NULL DEFAULT ''
+      );
+
+      ALTER TABLE masters DROP CONSTRAINT masters_tax_status_check;
+      ALTER TABLE masters ADD CONSTRAINT masters_tax_status_check CHECK (tax_status IN ('npd', 'ip', 'none'));
+      ALTER TABLE masters ADD COLUMN lead_id text REFERENCES masters(user_id);
+      ALTER TABLE masters ADD COLUMN is_lead boolean NOT NULL DEFAULT false;
+      ALTER TABLE masters ADD COLUMN npd_checked_at date;
+      CREATE INDEX masters_lead ON masters (lead_id);
+
+      ALTER TABLE requests DROP CONSTRAINT requests_source_check;
+      ALTER TABLE requests ADD CONSTRAINT requests_source_check CHECK (source IN ('site', 'app', 'call', 'avito', 'maps', 'recommendation', 'other'));
+      ALTER TABLE requests ADD COLUMN apartment text NOT NULL DEFAULT '';
+      ALTER TABLE requests ADD COLUMN entrance text NOT NULL DEFAULT '';
+      ALTER TABLE requests ADD COLUMN floor text NOT NULL DEFAULT '';
+      ALTER TABLE requests ADD COLUMN intercom text NOT NULL DEFAULT '';
+      ALTER TABLE requests ADD COLUMN visit_at timestamptz;
+      ALTER TABLE requests ADD COLUMN visit_until timestamptz;
+      ALTER TABLE requests ADD COLUMN utm jsonb;
+      ALTER TABLE requests ADD COLUMN done_at timestamptz;
+      ALTER TABLE requests ADD COLUMN act_signed_at timestamptz;
+      ALTER TABLE requests ADD COLUMN paid_at timestamptz;
+      ALTER TABLE requests ADD COLUMN closed_at timestamptz;
+      ALTER TABLE requests ADD COLUMN warranty_until date;
+      ALTER TABLE requests ADD COLUMN refund_required boolean NOT NULL DEFAULT false;
+      ALTER TABLE requests ADD COLUMN owner_note text NOT NULL DEFAULT '';
+      ALTER TABLE requests ADD COLUMN rating smallint CHECK (rating BETWEEN 1 AND 5);
+      ALTER TABLE requests ADD COLUMN review text NOT NULL DEFAULT '';
+      CREATE INDEX requests_visit ON requests (visit_at);
+
+      CREATE TABLE estimates (
+        id              text PRIMARY KEY,
+        request_id      text NOT NULL REFERENCES requests(id),
+        version         int NOT NULL,
+        status          text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sent', 'approved', 'rejected', 'superseded')),
+        reserve_percent numeric(5,2) NOT NULL DEFAULT 0,
+        note            text NOT NULL DEFAULT '',
+        created_by      text REFERENCES users(id),
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        sent_at         timestamptz,
+        approved_at     timestamptz,
+        approved_by     text REFERENCES users(id),
+        reject_reason   text NOT NULL DEFAULT ''
+      );
+      CREATE UNIQUE INDEX estimates_version ON estimates (request_id, version);
+      CREATE UNIQUE INDEX estimates_one_approved ON estimates (request_id) WHERE status = 'approved';
+
+      CREATE TABLE estimate_items (
+        id          text PRIMARY KEY,
+        estimate_id text NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+        kind        text NOT NULL CHECK (kind IN ('work', 'material', 'equipment')),
+        service_id  text REFERENCES services(id),
+        name        text NOT NULL,
+        unit        text NOT NULL,
+        qty         numeric(12,3) NOT NULL CHECK (qty > 0),
+        price       bigint NOT NULL CHECK (price >= 0),
+        cost        bigint CHECK (cost >= 0),
+        used_qty    numeric(12,3) CHECK (used_qty >= 0),
+        sort        int NOT NULL DEFAULT 0
+      );
+      CREATE INDEX estimate_items_estimate ON estimate_items (estimate_id, sort);
+
+      CREATE TABLE invoices (
+        id           text PRIMARY KEY,
+        request_id   text NOT NULL REFERENCES requests(id),
+        number       text NOT NULL UNIQUE,
+        kind         text NOT NULL CHECK (kind IN ('materials', 'works', 'full', 'other')),
+        amount       bigint NOT NULL CHECK (amount > 0),
+        payment_url  text NOT NULL DEFAULT '',
+        status       text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sent', 'paid', 'cancelled', 'refunded')),
+        created_by   text REFERENCES users(id),
+        confirmed_by text REFERENCES users(id),
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        sent_at      timestamptz,
+        paid_at      timestamptz,
+        bank_ref     text NOT NULL DEFAULT ''
+      );
+      CREATE INDEX invoices_request ON invoices (request_id);
+
+      CREATE TABLE payouts (
+        id           text PRIMARY KEY,
+        master_id    text NOT NULL REFERENCES masters(user_id),
+        request_id   text REFERENCES requests(id),
+        kind         text NOT NULL CHECK (kind IN ('work', 'deduction', 'bonus')),
+        amount       bigint NOT NULL,
+        needs_amount boolean NOT NULL DEFAULT false,
+        reason       text NOT NULL DEFAULT '',
+        status       text NOT NULL DEFAULT 'accrued' CHECK (status IN ('accrued', 'paid', 'cancelled')),
+        accrued_at   timestamptz NOT NULL DEFAULT now(),
+        paid_at      timestamptz,
+        method       text CHECK (method IN ('bank', 'personal')),
+        receipt_url  text NOT NULL DEFAULT '',
+        created_by   text REFERENCES users(id)
+      );
+      CREATE INDEX payouts_master ON payouts (master_id, status);
+      CREATE INDEX payouts_request ON payouts (request_id);
+
+      CREATE TABLE files (
+        id          text PRIMARY KEY,
+        request_id  text REFERENCES requests(id),
+        payout_id   text REFERENCES payouts(id),
+        uploaded_by text NOT NULL REFERENCES users(id),
+        kind        text NOT NULL CHECK (kind IN ('client_photo', 'before', 'after', 'extra_work', 'act_paper', 'npd_receipt')),
+        storage_key text NOT NULL,
+        mime        text NOT NULL,
+        size        int NOT NULL,
+        width       int,
+        height      int,
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        deleted_at  timestamptz
+      );
+      CREATE INDEX files_request ON files (request_id);
+      CREATE INDEX files_payout ON files (payout_id);
+
+      CREATE TABLE acts (
+        id         text PRIMARY KEY,
+        request_id text NOT NULL REFERENCES requests(id),
+        accepted   boolean NOT NULL,
+        remarks    text NOT NULL DEFAULT '',
+        method     text NOT NULL CHECK (method IN ('app', 'paper')),
+        file_id    text REFERENCES files(id),
+        signed_by  text NOT NULL REFERENCES users(id),
+        signed_at  timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX acts_request ON acts (request_id);
+
+      CREATE TABLE notifications (
+        id           text PRIMARY KEY,
+        user_id      text REFERENCES users(id),
+        phone        text NOT NULL DEFAULT '',
+        channel      text NOT NULL CHECK (channel IN ('sms', 'call', 'push')),
+        template     text NOT NULL,
+        body         text NOT NULL DEFAULT '',
+        status       text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'sent', 'failed')),
+        attempts     int NOT NULL DEFAULT 0,
+        provider_ref text NOT NULL DEFAULT '',
+        error        text NOT NULL DEFAULT '',
+        request_id   text REFERENCES requests(id),
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        sent_at      timestamptz
+      );
+      CREATE INDEX notifications_status ON notifications (status, created_at);
+
+      CREATE TABLE push_tokens (
+        token      text PRIMARY KEY,
+        user_id    text NOT NULL REFERENCES users(id),
+        platform   text NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE settings (
+        key        text PRIMARY KEY,
+        value      jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        updated_by text REFERENCES users(id)
+      );
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

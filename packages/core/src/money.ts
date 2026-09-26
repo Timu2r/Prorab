@@ -1,6 +1,11 @@
 /** Все суммы — целые копейки. */
 export type Kopecks = number;
 
+/** Сумма строки: цена за единицу × количество (количество бывает дробным: 12,5 м²), до копейки. */
+export function lineTotal(price: Kopecks, qty: number): Kopecks {
+  return Math.round(price * qty);
+}
+
 export type MasterRate =
   | { mode: "percent"; percent: number }
   | { mode: "fixed"; prices: Record<string, Kopecks> }; // id позиции прайса -> цена для мастера за единицу
@@ -14,14 +19,14 @@ export type WorkLine = { serviceId: string; qty: number; clientPrice: Kopecks };
  */
 export function masterPay(rate: MasterRate, lines: readonly WorkLine[]): Kopecks | null {
   if (rate.mode === "percent") {
-    const work = lines.reduce((s, l) => s + l.clientPrice * l.qty, 0);
+    const work = lines.reduce((s, l) => s + lineTotal(l.clientPrice, l.qty), 0);
     return Math.round((work * rate.percent) / 100);
   }
   let total = 0;
   for (const l of lines) {
     const price = rate.prices[l.serviceId];
     if (price === undefined) return null;
-    total += price * l.qty;
+    total += lineTotal(price, l.qty);
   }
   return total;
 }
@@ -36,10 +41,17 @@ export type RequestMoney = {
   masterPay: Kopecks;
 };
 
+/** Прогноз заработка по смете (до оплаты). */
 export function requestProfit(m: RequestMoney, taxPercent = USN_RATE_PERCENT) {
   const revenue = m.work + m.goods;
   const tax = Math.round((revenue * taxPercent) / 100);
   return { revenue, tax, profit: revenue - m.goodsCost - m.masterPay - tax };
+}
+
+/** Деньги по заявке по факту: выручка — оплаченные счета, расходы — закупка материалов и выплаты мастеру. */
+export function requestResult(m: { revenue: Kopecks; goodsCost: Kopecks; payouts: Kopecks }, taxPercent = USN_RATE_PERCENT) {
+  const tax = Math.round((m.revenue * taxPercent) / 100);
+  return { revenue: m.revenue, goodsCost: m.goodsCost, payouts: m.payouts, tax, profit: m.revenue - m.goodsCost - m.payouts - tax };
 }
 
 /** 1234567 -> «12 345,67 ₽» */

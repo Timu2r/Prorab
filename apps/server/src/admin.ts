@@ -1,5 +1,5 @@
-import { normalizePhone } from "@ks/core";
-import type { Db } from "./db";
+import { normalizePhone, roundPriceRub, type TaxStatus } from "@ks/core";
+import type { Db, Queryable } from "./db";
 import { ApiError, newId } from "./util";
 
 type ServiceRow = { id: string; category: string; name: string; unit: string; price: string | null; active: boolean; sort: number };
@@ -43,6 +43,21 @@ export class CatalogService {
     if (!row) throw new ApiError(404, "not_found", "Позиция не найдена");
     return service(row);
   }
+
+  /** Все цены направления (или всего прайса) на процент, с округлением до «красивых» сумм. */
+  async reprice(percent: number, category?: string) {
+    await this.db.tx(async (q) => {
+      const rows = await q.query<{ id: string; price: string }>(
+        `SELECT id, price FROM services WHERE price IS NOT NULL${category ? " AND category = $1" : ""}`,
+        category ? [category] : [],
+      );
+      for (const r of rows) {
+        const rub = roundPriceRub((Number(r.price) / 100) * (1 + percent / 100));
+        await q.query(`UPDATE services SET price = $1 WHERE id = $2`, [Math.max(rub, 0) * 100, r.id]);
+      }
+    });
+    return this.adminList();
+  }
 }
 
 type MasterRow = {
@@ -50,12 +65,19 @@ type MasterRow = {
   phone: string;
   name: string;
   skills: string[];
-  tax_status: "npd" | "ip";
+  tax_status: TaxStatus;
   inn: string;
   contract_no: string;
   contract_at: string | null;
+  npd_checked_at: string | null;
   note: string;
   active: boolean;
+  is_lead: boolean;
+  lead_id: string | null;
+  lead_name: string | null;
+  team_size: number;
+  active_jobs: number;
+  to_pay: string | number;
   rate: { mode: "percent" | "fixed"; percent: string | null; prices: Record<string, number>; valid_from: string } | null;
 };
 
@@ -68,8 +90,14 @@ const master = (m: MasterRow) => ({
   inn: m.inn,
   contractNo: m.contract_no,
   contractAt: m.contract_at,
+  npdCheckedAt: m.npd_checked_at,
   note: m.note,
   active: m.active,
+  isLead: m.is_lead,
+  lead: m.lead_id ? { id: m.lead_id, name: m.lead_name ?? "" } : null,
+  teamSize: m.team_size,
+  activeJobs: m.active_jobs,
+  toPay: Number(m.to_pay),
   rate: m.rate && { mode: m.rate.mode, percent: m.rate.percent === null ? null : Number(m.rate.percent), prices: m.rate.prices, validFrom: m.rate.valid_from },
 });
 
@@ -77,12 +105,17 @@ export type MasterInput = {
   phone: string;
   name: string;
   skills: string[];
-  taxStatus: "npd" | "ip";
+  taxStatus: TaxStatus;
   inn: string;
   contractNo: string;
   contractAt: string | null;
+  npdCheckedAt: string | null;
   note: string;
+  isLead: boolean;
+  leadId: string | null;
 };
+
+const ACTIVE_JOBS = `('assigned', 'accepted', 'en_route', 'on_site', 'done')`;
 
 export class MasterService {
   constructor(private db: Db) {}
@@ -91,15 +124,18 @@ export class MasterService {
     // Текущая ставка — последняя из вступивших в силу.
     return `
       SELECT u.id, u.phone, u.name, m.skills, m.tax_status, m.inn, m.contract_no, to_char(m.contract_at, 'YYYY-MM-DD') AS contract_at,
-             m.note, m.active,
+             to_char(m.npd_checked_at, 'YYYY-MM-DD') AS npd_checked_at, m.note, m.active, m.is_lead, m.lead_id, lu.name AS lead_name,
+             (SELECT count(*)::int FROM masters t WHERE t.lead_id = m.user_id) AS team_size,
+             (SELECT count(*)::int FROM requests rq WHERE rq.master_id = m.user_id AND rq.status IN ${ACTIVE_JOBS} AND rq.deleted_at IS NULL) AS active_jobs,
+             (SELECT COALESCE(sum(p.amount), 0) FROM payouts p WHERE p.master_id = m.user_id AND p.status = 'accrued') AS to_pay,
              (SELECT json_build_object('mode', r.mode, 'percent', r.percent, 'prices', r.prices, 'valid_from', to_char(r.valid_from, 'YYYY-MM-DD'))
               FROM master_rates r WHERE r.master_id = m.user_id AND r.valid_from <= current_date
               ORDER BY r.valid_from DESC, r.created_at DESC LIMIT 1) AS rate
-      FROM masters m JOIN users u ON u.id = m.user_id ${where}`;
+      FROM masters m JOIN users u ON u.id = m.user_id LEFT JOIN users lu ON lu.id = m.lead_id ${where}`;
   }
 
   async list() {
-    return (await this.db.query<MasterRow>(`${this.select("")} ORDER BY m.active DESC, u.name`)).map(master);
+    return (await this.db.query<MasterRow>(`${this.select("")} ORDER BY m.active DESC, m.is_lead DESC, u.name`)).map(master);
   }
 
   async get(id: string) {
@@ -108,9 +144,18 @@ export class MasterService {
     return master(row);
   }
 
+  /** Бригадир — только тот, кто отмечен бригадиром; сам себе бригадиром быть нельзя. */
+  private async checkLead(q: Queryable, masterId: string | null, leadId: string | null | undefined) {
+    if (!leadId) return;
+    if (leadId === masterId) throw new ApiError(400, "bad_lead", "Мастер не может быть бригадиром сам себе");
+    const [l] = await q.query<{ is_lead: boolean }>(`SELECT is_lead FROM masters WHERE user_id = $1`, [leadId]);
+    if (!l?.is_lead) throw new ApiError(400, "bad_lead", "Выбранный человек не бригадир");
+  }
+
   async create(input: MasterInput) {
     const phone = normalizePhone(input.phone);
     if (!phone) throw new ApiError(400, "bad_phone", "Неверный телефон мастера");
+    if (input.isLead && input.leadId) throw new ApiError(400, "bad_lead", "Бригадир не может быть в чужой бригаде");
     const id = await this.db.tx(async (q) => {
       const [existing] = await q.query<{ id: string; roles: string[] }>(`SELECT id, roles FROM users WHERE phone = $1 AND deleted_at IS NULL`, [phone]);
       let userId: string;
@@ -127,9 +172,11 @@ export class MasterService {
         userId = newId("usr");
         await q.query(`INSERT INTO users (id, phone, name, roles) VALUES ($1, $2, $3, '{client,master}')`, [userId, phone, input.name]);
       }
+      await this.checkLead(q, userId, input.leadId);
       await q.query(
-        `INSERT INTO masters (user_id, skills, tax_status, inn, contract_no, contract_at, note) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [userId, input.skills, input.taxStatus, input.inn, input.contractNo, input.contractAt, input.note],
+        `INSERT INTO masters (user_id, skills, tax_status, inn, contract_no, contract_at, npd_checked_at, note, is_lead, lead_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [userId, input.skills, input.taxStatus, input.inn, input.contractNo, input.contractAt, input.npdCheckedAt, input.note, input.isLead, input.leadId],
       );
       return userId;
     });
@@ -137,16 +184,23 @@ export class MasterService {
   }
 
   async update(id: string, patch: Partial<Omit<MasterInput, "phone"> & { active: boolean }>) {
-    await this.get(id);
+    const current = await this.get(id);
     const cols: Record<string, string> = {
       skills: "skills",
       taxStatus: "tax_status",
       inn: "inn",
       contractNo: "contract_no",
       contractAt: "contract_at",
+      npdCheckedAt: "npd_checked_at",
       note: "note",
       active: "active",
+      isLead: "is_lead",
+      leadId: "lead_id",
     };
+    const isLead = patch.isLead ?? current.isLead;
+    const leadId = patch.leadId !== undefined ? patch.leadId : (current.lead?.id ?? null);
+    if (isLead && leadId) throw new ApiError(400, "bad_lead", "Бригадир не может быть в чужой бригаде");
+    if (patch.isLead === false && current.teamSize > 0) throw new ApiError(409, "has_team", "Сначала переведите мастеров бригады к другому бригадиру");
     const sets: string[] = [];
     const params: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) {
@@ -155,6 +209,7 @@ export class MasterService {
       sets.push(`${cols[k]} = $${params.length}`);
     }
     await this.db.tx(async (q) => {
+      if (patch.leadId !== undefined) await this.checkLead(q, id, patch.leadId);
       if (sets.length) {
         params.push(id);
         await q.query(`UPDATE masters SET ${sets.join(", ")} WHERE user_id = $${params.length}`, params);
@@ -171,5 +226,22 @@ export class MasterService {
       [newId("rate"), id, rate.mode, rate.mode === "percent" ? rate.percent : null, JSON.stringify(rate.mode === "fixed" ? rate.prices : {}), rate.validFrom],
     );
     return this.get(id);
+  }
+
+  /** Команда бригадира: он сам и его мастера, с загрузкой — сколько заданий в работе и визитов на ближайшую неделю. */
+  async team(leadId: string) {
+    const [lead] = await this.db.query<{ is_lead: boolean }>(`SELECT is_lead FROM masters WHERE user_id = $1`, [leadId]);
+    if (!lead?.is_lead) throw new ApiError(403, "forbidden", "Раздел «Команда» — для бригадиров");
+    const rows = await this.db.query<MasterRow & { week_visits: number }>(
+      `${this.select("WHERE m.user_id = $1 OR m.lead_id = $1")}`.replace(
+        "AS rate\n      FROM",
+        `AS rate,
+             (SELECT count(*)::int FROM requests rq WHERE rq.master_id = m.user_id AND rq.visit_at >= now() AND rq.visit_at < now() + interval '7 days'
+                AND rq.status IN ${ACTIVE_JOBS}) AS week_visits
+      FROM`,
+      ),
+      [leadId],
+    );
+    return rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, skills: r.skills, isLead: r.is_lead, active: r.active, activeJobs: r.active_jobs, weekVisits: r.week_visits }));
   }
 }
