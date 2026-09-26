@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.expo/
+*.log
+.env
+apps/server/data/
+apps/server/uploads/
+web-build/

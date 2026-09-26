@@ -1,0 +1,12 @@
+{
+  "name": "klimat-servis",
+  "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "dev:server": "pnpm --filter @ks/server dev",
+    "dev:web": "pnpm --filter @ks/web dev",
+    "dev:mobile": "pnpm --filter @ks/mobile start",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
