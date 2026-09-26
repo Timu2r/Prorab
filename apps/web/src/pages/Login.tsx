@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router";
 import { api, ApiError, type User } from "../api";
 import { useAuth } from "../auth";
-import { Header } from "./Home";
+import { formatPhoneInput } from "../components/LeadForm";
+import { SiteHeader } from "../components/SiteHeader";
 
 type CodeResponse = { phone: string; resendAfter: number; devCode?: string };
 
@@ -46,54 +47,47 @@ export function LoginPage() {
     });
   };
 
-  const verify = (value: string) =>
-    run(async () => {
-      const r = await api<{ token: string; user: User }>("POST", "/auth/verify", { phone: sent!.phone, code: value, device: "web" });
-      signIn(r.token, r.user);
-      navigate("/cabinet", { replace: true });
-    });
-
   const onCode = (v: string) => {
     const digits = v.replace(/\D/g, "").slice(0, 4);
     setCode(digits);
-    if (digits.length === 4) void verify(digits);
+    if (digits.length === 4)
+      void run(async () => {
+        const r = await api<{ token: string; user: User }>("POST", "/auth/verify", { phone: sent!.phone, code: digits, device: "web" });
+        signIn(r.token, r.user);
+        navigate("/cabinet", { replace: true });
+      });
   };
 
   return (
     <>
-      <Header />
-      <div className="page-center" style={{ minHeight: "calc(100dvh - 65px)" }}>
+      <SiteHeader />
+      <div className="page-center">
         {!sent ? (
-          <form className="login" onSubmit={requestCode}>
+          <form className="auth-card" onSubmit={requestCode}>
             <h1>Вход</h1>
-            <p className="muted" style={{ margin: 0 }}>
-              Вам позвонят с незнакомого номера. Последние 4 цифры этого номера — код входа, отвечать на звонок не нужно.
-            </p>
-            <div className="field">
-              <label htmlFor="phone">Мобильный телефон</label>
+            <p className="muted">Для клиентов, мастеров и владельца. Вам позвонят: последние 4 цифры входящего номера — код входа, отвечать не нужно.</p>
+            <label className="field">
+              <span>Мобильный телефон</span>
               <input
-                id="phone"
                 className="input"
                 type="tel"
                 inputMode="tel"
                 autoComplete="tel"
-                placeholder="+7 999 123-45-67"
+                placeholder="+7 (999) 123-45-67"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
                 autoFocus
               />
-            </div>
+            </label>
             {error && <div className="error">{error}</div>}
-            <button className="btn btn-primary" disabled={busy || phone.replace(/\D/g, "").length < 10}>
+            <button className="btn btn-primary btn-block" disabled={busy || phone.replace(/\D/g, "").length < 11}>
               Получить код
             </button>
           </form>
         ) : (
-          <div className="login">
+          <div className="auth-card">
             <h1>Код из звонка</h1>
-            <p className="muted" style={{ margin: 0 }}>
-              Звоним на {sent.phone}. Введите последние 4 цифры номера, с которого поступил звонок.
-            </p>
+            <p className="muted">Звоним на {formatPhoneInput(sent.phone)}. Введите последние 4 цифры номера, с которого поступил звонок.</p>
             {sent.devCode && <div className="dev-hint">Режим разработки: код {sent.devCode}</div>}
             <input
               className="input code-input"
@@ -106,7 +100,7 @@ export function LoginPage() {
               autoFocus
             />
             {error && <div className="error">{error}</div>}
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <button className="btn-link" onClick={() => setSent(null)}>
                 Изменить номер
               </button>

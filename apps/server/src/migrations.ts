@@ -2,7 +2,8 @@ import { DEFAULT_SERVICES } from "@ks/core";
 import type { Db } from "./db";
 
 /**
- * Миграции применяются по порядку и ровно один раз. Уже выпущенную миграцию не меняем — только добавляем новую.
+ * Миграции применяются по порядку и ровно один раз. После первого выпуска на боевой сервер миграции не меняем —
+ * только добавляем новые (до выпуска, пока база есть лишь у разработчика, 1 и 2 правятся с пересозданием базы).
  * Деньги в копейках (bigint), удаление мягкое (deleted_at), история заявки не стирается.
  */
 const MIGRATIONS: { id: number; sql: () => string }[] = [
@@ -84,7 +85,7 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
         category      text NOT NULL,
         service_ids   text[] NOT NULL DEFAULT '{}',
         description   text NOT NULL DEFAULT '',
-        address       text NOT NULL,
+        address       text NOT NULL DEFAULT '',
         district      text NOT NULL DEFAULT '',
         wanted_date   date,
         wanted_slot   text NOT NULL DEFAULT '',
@@ -94,6 +95,7 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
         price_goods   bigint,
         prepaid_at    timestamptz,
         cancel_reason text NOT NULL DEFAULT '',
+        consent_at    timestamptz,      -- согласие клиента на обработку персональных данных (152-ФЗ)
         created_at    timestamptz NOT NULL DEFAULT now(),
         updated_at    timestamptz NOT NULL DEFAULT now(),
         deleted_at    timestamptz
@@ -119,7 +121,7 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
     sql: () =>
       DEFAULT_SERVICES.map(
         (s, i) =>
-          `INSERT INTO services (id, category, name, unit, sort) VALUES ('svc_${String(i + 1).padStart(2, "0")}', '${s.category}', '${s.name.replace(/'/g, "''")}', '${s.unit}', ${(i + 1) * 10});`,
+          `INSERT INTO services (id, category, name, unit, sort) VALUES ('svc_${s.key}','${s.category}', '${s.name.replace(/'/g, "''")}', '${s.unit}', ${(i + 1) * 10});`,
       ).join("\n"),
   },
 ];

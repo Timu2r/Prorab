@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "./auth";
 import { CabinetPage } from "./pages/Cabinet";
 import { HomePage } from "./pages/Home";
 import { LoginPage } from "./pages/Login";
+import { PrivacyPage } from "./pages/Privacy";
 import "./styles.css";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -20,6 +21,7 @@ createRoot(document.getElementById("root")!).render(
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
           <Route
             path="/cabinet"
             element={

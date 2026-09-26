@@ -76,6 +76,14 @@ const schemas = {
       serviceIds: z.array(z.string().max(40)).max(20),
     })
     .partial(),
+  lead: z.object({
+    name: z.string().trim().min(2, "Как к вам обращаться?").max(80),
+    phone: z.string().max(30),
+    category: z.enum(CATEGORIES).default("general"),
+    comment: z.string().trim().max(1000).default(""),
+    consent: z.literal(true, { error: "Нужно согласие на обработку персональных данных" }),
+    website: z.string().max(200).default(""), // поле-ловушка: человек его не видит, бот заполняет
+  }),
   status: z.object({ to: z.enum(REQUEST_STATUSES), reason: z.string().max(500).default("") }),
   assign: z.object({ masterId: z.string().max(60) }),
   unassign: z.object({ reason: z.string().max(500).default("") }),
@@ -156,6 +164,18 @@ export async function buildApp(db: Db, sender: CodeSender, cfg: AppConfig) {
   app.get("/admin/masters/:id", async (req) => (need(req, "owner"), { master: await masters.get(param(req, "id")) }));
   app.patch("/admin/masters/:id", async (req) => (need(req, "owner"), { master: await masters.update(param(req, "id"), body(schemas.patchMaster, req)) }));
   app.post("/admin/masters/:id/rates", async (req) => (need(req, "owner"), { master: await masters.setRate(param(req, "id"), body(schemas.rate, req)) }));
+
+  // Заявка с сайта без входа. Лимит по адресу в памяти процесса: для одного сервера этого достаточно.
+  const leadHits = new Map<string, number[]>();
+  app.post("/public/leads", async (req, reply: FastifyReply) => {
+    const b = body(schemas.lead, req);
+    if (b.website) return reply.status(201).send({ number: null }); // бот: делаем вид, что всё прошло
+    const now = Date.now();
+    const hits = (leadHits.get(req.ip) ?? []).filter((t) => now - t < 3_600_000);
+    if (hits.length >= 5) throw new ApiError(429, "too_many", "Слишком много заявок. Попробуйте позже или позвоните нам");
+    leadHits.set(req.ip, [...hits, now]);
+    return reply.status(201).send(await requests.createLead(b));
+  });
 
   // Заявки: каждая роль видит своё, права проверяются в RequestService
   app.post("/requests", async (req, reply: FastifyReply) => {

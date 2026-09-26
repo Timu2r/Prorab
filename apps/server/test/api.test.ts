@@ -215,12 +215,54 @@ describe("мастера и ставки", () => {
     expect(r.status).toBe(400);
   });
 
-  it("прайс: 31 позиция на старте, цена задаётся владельцем", async () => {
+  it("прайс: 56 позиций на старте, цена задаётся владельцем", async () => {
     const owner = await login(OWNER);
     const list = (await call("GET", "/services")).body.services;
-    expect(list).toHaveLength(31);
+    expect(list).toHaveLength(56);
     const s = await call("PATCH", `/admin/services/${list[0].id}`, owner, { price: 1_500_000 });
     expect(s.body.service.price).toBe(1_500_000);
     expect((await call("GET", "/services")).body.services[0].price).toBe(1_500_000);
+  });
+});
+
+describe("заявка с сайта без входа", () => {
+  const lead = { name: "Ольга", phone: "8 999 000-00-07", category: "facade", comment: "Штукатурка фасада, 120 м²", consent: true };
+
+  it("попадает владельцу как новая заявка с сайта", async () => {
+    const r = await call("POST", "/public/leads", undefined, lead);
+    expect(r.status).toBe(201);
+    expect(r.body.number).toMatch(/^Z-\d{4}$/);
+    const owner = await login(OWNER);
+    const [req] = (await call("GET", "/requests", owner)).body.requests;
+    expect(req).toMatchObject({ source: "site", status: "new", category: "facade", client: { name: "Ольга", phone: "+79990000007" } });
+  });
+
+  it("клиент потом входит по коду и видит свою заявку", async () => {
+    await call("POST", "/public/leads", undefined, lead);
+    const client = await login("+79990000007");
+    expect((await call("GET", "/requests", client)).body.requests).toHaveLength(1);
+  });
+
+  it("без согласия на обработку данных не принимается", async () => {
+    const r = await call("POST", "/public/leads", undefined, { ...lead, consent: false });
+    expect(r.status).toBe(400);
+  });
+
+  it("бот, заполнивший поле-ловушку, заявку не создаёт", async () => {
+    const r = await call("POST", "/public/leads", undefined, { ...lead, website: "http://spam" });
+    expect(r.status).toBe(201);
+    const owner = await login(OWNER);
+    expect((await call("GET", "/requests", owner)).body.requests).toEqual([]);
+  });
+
+  it("не больше трёх заявок в сутки с одного номера", async () => {
+    for (let i = 0; i < 3; i++) expect((await app.inject({ method: "POST", url: "/public/leads", payload: lead, remoteAddress: `10.0.0.${i}` })).statusCode).toBe(201);
+    const r = await app.inject({ method: "POST", url: "/public/leads", payload: lead, remoteAddress: "10.0.0.9" });
+    expect(r.statusCode).toBe(429);
+  });
+
+  it("не больше пяти заявок в час с одного адреса", async () => {
+    for (let i = 0; i < 5; i++) await call("POST", "/public/leads", undefined, { ...lead, phone: `+7999000011${i}` });
+    expect((await call("POST", "/public/leads", undefined, { ...lead, phone: "+79990000120" })).status).toBe(429);
   });
 });

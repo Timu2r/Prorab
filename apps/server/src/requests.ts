@@ -160,6 +160,43 @@ export class RequestService {
     });
   }
 
+  /**
+   * Заявка с сайта без входа: имя, телефон, направление, комментарий и согласие на обработку данных.
+   * Адрес и детали владелец уточняет по телефону. Клиент заводится по номеру; войти в кабинет
+   * он сможет позже по коду на этот же номер и увидит там свою заявку.
+   */
+  async createLead(input: { name: string; phone: string; category: string; comment: string }) {
+    const phone = normalizePhone(input.phone);
+    if (!phone) throw new ApiError(400, "bad_phone", "Введите мобильный номер, например +7 999 123-45-67");
+    return this.db.tx(async (q) => {
+      const [{ n }] = await q.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM requests r JOIN users u ON u.id = r.client_id
+         WHERE u.phone = $1 AND r.source = 'site' AND r.created_at > now() - interval '1 day'`,
+        [phone],
+      );
+      if (n >= 3) throw new ApiError(429, "too_many", "Вы уже оставили заявку. Мы перезвоним");
+      const [existing] = await q.query<{ id: string; name: string }>(`SELECT id, name FROM users WHERE phone = $1 AND deleted_at IS NULL`, [phone]);
+      let clientId: string;
+      if (existing) {
+        clientId = existing.id;
+        if (!existing.name) await q.query(`UPDATE users SET name = $1 WHERE id = $2`, [input.name, clientId]);
+      } else {
+        clientId = newId("usr");
+        await q.query(`INSERT INTO users (id, phone, name) VALUES ($1, $2, $3)`, [clientId, phone, input.name]);
+      }
+      const id = newId("req");
+      const [{ number }] = await q.query<{ number: number }>(
+        `INSERT INTO requests (id, client_id, category, description, source, consent_at) VALUES ($1, $2, $3, $4, 'site', now()) RETURNING number`,
+        [id, clientId, input.category, input.comment],
+      );
+      await q.query(
+        `INSERT INTO request_events (id, request_id, actor_id, actor_role, kind, payload) VALUES ($1, $2, $3, 'client', 'created', '{"source":"site"}')`,
+        [newId("evt"), id, clientId],
+      );
+      return { number: formatRequestNumber(number) };
+    });
+  }
+
   async list(user: User, status?: string) {
     const params: unknown[] = [];
     let where = "";
