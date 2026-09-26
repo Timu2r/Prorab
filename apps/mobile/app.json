@@ -1,17 +1,22 @@
 {
   "expo": {
-    "name": "Отвес",
+    "name": "Прораб",
     "slug": "klimat-servis",
     "version": "0.1.0",
     "scheme": "klimatservis",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "ru.klimatservis.app"
     },
     "android": {
-      "package": "ru.klimatservis.app"
+      "package": "ru.klimatservis.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#17191c"
+      }
     },
     "plugins": [
       "expo-router",
@@ -20,8 +25,9 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "name": "Отвес",
-      "shortName": "Отвес",
+      "name": "Прораб",
+      "shortName": "Прораб",
+      "favicon": "./assets/favicon.png",
       "lang": "ru",
       "themeColor": "#17191c",
       "backgroundColor": "#f3f1ec"

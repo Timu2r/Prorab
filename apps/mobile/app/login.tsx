@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api, errorText } from "../src/api";
 import { useAuth } from "../src/auth";
 import { formatPhoneInput } from "../src/format";
-import { Logo } from "../src/Logo";
+import { BrandCard } from "../src/Logo";
 import { useTheme } from "../src/theme";
 import { Button, Field } from "../src/ui";
 
@@ -64,7 +64,7 @@ export default function Login() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 20 }} keyboardShouldPersistTaps="handled">
           <View style={{ width: "100%", maxWidth: 420, alignSelf: "center", gap: 18 }}>
-            <Logo />
+            <BrandCard note="Заявки, сметы, оплаты и задания мастеров — в одном месте." />
             {!sent ? (
               <>
                 <Text style={{ color: t.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 }}>Вход</Text>

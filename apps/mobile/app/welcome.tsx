@@ -5,7 +5,7 @@ import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api, errorText, siteUrl } from "../src/api";
 import { useAuth } from "../src/auth";
-import { Logo } from "../src/Logo";
+import { BrandCard } from "../src/Logo";
 import { useTheme } from "../src/theme";
 import { Button, Field, Splash } from "../src/ui";
 
@@ -45,7 +45,7 @@ function WelcomeForm() {
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
       <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 20 }} keyboardShouldPersistTaps="handled">
         <View style={{ width: "100%", maxWidth: 420, alignSelf: "center", gap: 18 }}>
-          <Logo />
+          <BrandCard />
           <Text style={{ color: t.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 }}>Давайте знакомиться</Text>
           <Field label="Как к вам обращаться" value={name} onChangeText={setName} autoComplete="name" autoFocus maxLength={80} />
           <Pressable

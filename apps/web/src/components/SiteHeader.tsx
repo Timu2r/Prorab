@@ -1,22 +1,22 @@
-import { BRAND } from "@ks/core";
+import { BRAND, LOGO_WORD } from "@ks/core";
 import { Menu, Phone, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth";
 
+/** Трафаретная надпись ПРОРАБ, под ней подпись ровно по ширине слова. Контуры — packages/core/src/logo.ts. */
 export function Logo() {
+  const { width, height, letters } = LOGO_WORD;
   return (
     <Link to="/" className="logo" aria-label={`${BRAND.name} — на главную`}>
-      {/* Знак — строительный отвес: нить и груз */}
-      <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="4" fill="var(--accent)" />
-        <path d="M16 5v8" stroke="#fff" strokeWidth="2" />
-        <path d="M11 13h10l-5 13z" fill="#fff" />
+      <svg viewBox={`0 0 ${width} ${height + 20}`} aria-hidden="true">
+        {letters.map((d, i) => (
+          <path key={i} d={d} className={i === 0 ? "logo-first" : undefined} />
+        ))}
+        <text x="0" y={height + 19} textLength={width} lengthAdjust="spacing" className="logo-tag">
+          {BRAND.tagline.toUpperCase()}
+        </text>
       </svg>
-      <span>
-        {BRAND.name}
-        <small>{BRAND.tagline}</small>
-      </span>
     </Link>
   );
 }

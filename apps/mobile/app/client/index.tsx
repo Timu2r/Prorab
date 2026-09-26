@@ -21,7 +21,7 @@ export default function ClientHome() {
   const phone = BRAND.phone;
 
   return (
-    <Screen title={user?.name ? `Здравствуйте, ${user.name}` : "Здравствуйте"} subtitle={`${BRAND.name} — ремонт и строительные работы`} onRefresh={reload} refreshing={refreshing}>
+    <Screen brand title={user?.name ? `Здравствуйте, ${user.name}` : "Здравствуйте"} subtitle={`Ремонт и строительные работы · ${BRAND.region}`} onRefresh={reload} refreshing={refreshing}>
       <Card dark style={{ gap: 12 }}>
         <Text style={{ color: t.graphiteText, fontSize: 20, fontWeight: "800" }}>Нужен ремонт или мастер?</Text>
         <Text style={{ color: t.graphiteMuted, fontSize: 15, lineHeight: 21 }}>

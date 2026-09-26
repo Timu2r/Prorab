@@ -17,6 +17,8 @@ import {
   type ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { formatToday } from "./format";
+import { Logo, LogoMark } from "./Logo";
 import { useTheme, type Theme } from "./theme";
 
 /** Общие элементы интерфейса. Стиль как у сайта; кнопки не меньше 48 px — мастера работают в перчатках. */
@@ -39,12 +41,16 @@ export function statusTone(s: RequestStatus): Tone {
   return "neutral";
 }
 
-/** Экран с заголовком и прокруткой. На широком экране (браузер на ПК) содержимое по центру, не шире 760 px. */
+/**
+ * Экран с заголовком и прокруткой. На широком экране (браузер на ПК) содержимое по центру, не шире 760 px.
+ * brand — строка с логотипом и сегодняшней датой над заголовком, для главных вкладок.
+ */
 export function Screen({
   title,
   subtitle,
   right,
   top,
+  brand,
   children,
   onRefresh,
   refreshing = false,
@@ -53,6 +59,7 @@ export function Screen({
   subtitle?: string;
   right?: ReactNode;
   top?: ReactNode;
+  brand?: boolean;
   children?: ReactNode;
   onRefresh?: () => void;
   refreshing?: boolean;
@@ -66,6 +73,12 @@ export function Screen({
         refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.accent} /> : undefined}
       >
         <View style={s.inner}>
+          {brand ? (
+            <View style={[s.brand, { borderBottomColor: t.line }]}>
+              <Logo height={17} tagline={false} />
+              <Text style={{ color: t.muted, fontSize: 13, fontWeight: "600" }}>{formatToday()}</Text>
+            </View>
+          ) : null}
           {top}
           <View style={s.header}>
             <View style={{ flex: 1, gap: 4 }}>
@@ -86,7 +99,10 @@ export function Section({ title, children, right }: { title: string; children: R
   return (
     <View style={{ gap: 10, marginTop: 8 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={[s.section, { color: t.text }]}>{title}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={[s.mark, { backgroundColor: t.accent }]} />
+          <Text style={[s.section, { color: t.text }]}>{title}</Text>
+        </View>
         {right}
       </View>
       {children}
@@ -240,12 +256,13 @@ export function Loading() {
   );
 }
 
-/** Заставка на весь экран, пока загружается вход. */
+/** Заставка на весь экран, пока загружается вход: знак и индикатор. */
 export function Splash() {
   const t = useTheme();
   return (
-    <View style={{ flex: 1, justifyContent: "center", backgroundColor: t.bg }}>
-      <Loading />
+    <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 18, backgroundColor: t.bg }}>
+      <LogoMark size={64} />
+      <ActivityIndicator color={t.accent} />
     </View>
   );
 }
@@ -294,6 +311,8 @@ const s = StyleSheet.create({
   content: { padding: 16, paddingBottom: 48 },
   inner: { width: "100%", maxWidth: 760, alignSelf: "center", gap: 12 },
   header: { flexDirection: "row", alignItems: "flex-end", gap: 12, marginBottom: 4 },
+  brand: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingBottom: 12, marginBottom: 4, borderBottomWidth: 1 },
+  mark: { width: 4, height: 16, borderRadius: 1 },
   title: { fontSize: 30, fontWeight: "800", letterSpacing: -0.6 },
   subtitle: { fontSize: 15, lineHeight: 21 },
   section: { fontSize: 18, fontWeight: "800", letterSpacing: -0.2 },

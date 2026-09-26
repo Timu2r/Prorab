@@ -37,6 +37,16 @@ export function ago(v: string | Date): string {
   return `${Math.round(h / 24)} дн назад`;
 }
 
+const WEEKDAYS = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+
+/** «Пятница, 26 сентября» — сегодня по Москве. */
+export function formatToday(now = new Date()): string {
+  const d = msk(now);
+  const day = WEEKDAYS[d.getUTCDay()]!;
+  return `${day[0]!.toUpperCase()}${day.slice(1)}, ${d.getUTCDate()} ${MONTHS_GEN[d.getUTCMonth()]}`;
+}
+
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
 /** «2026-09» -> «Сентябрь». */

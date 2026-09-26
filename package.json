@@ -7,6 +7,7 @@
     "dev:web": "pnpm --filter @ks/web dev",
     "dev:mobile": "pnpm --filter @ks/mobile start",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "brand": "node scripts/brand.mjs"
   }
 }

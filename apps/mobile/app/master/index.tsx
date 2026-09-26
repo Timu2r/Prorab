@@ -34,7 +34,7 @@ export default function MasterJobs() {
   ];
 
   return (
-    <Screen title="Задания" onRefresh={reload} refreshing={refreshing}>
+    <Screen brand title="Задания" onRefresh={reload} refreshing={refreshing}>
       <Segmented value={tab} options={options} onChange={setTab} />
       {loading && !data ? <Loading /> : null}
       {error ? <ErrorBox text={error} onRetry={reload} /> : null}

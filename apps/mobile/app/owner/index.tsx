@@ -16,7 +16,7 @@ export default function OwnerDashboard() {
   const d = data?.dashboard;
 
   return (
-    <Screen title="Сводка" subtitle={user?.name ? `Здравствуйте, ${user.name}` : undefined} onRefresh={reload} refreshing={refreshing}>
+    <Screen brand title="Сводка" subtitle={user?.name ? `Здравствуйте, ${user.name}` : undefined} onRefresh={reload} refreshing={refreshing}>
       {loading && !d ? <Loading /> : null}
       {error ? <ErrorBox text={error} onRetry={reload} /> : null}
       {d ? (
@@ -29,7 +29,10 @@ export default function OwnerDashboard() {
               </Card>
             ) : (
               d.attention.map((a, i) => (
-                <Card key={`${a.kind}-${a.requestId ?? a.payoutId}-${i}`} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <Card
+                  key={`${a.kind}-${a.requestId ?? a.payoutId}-${i}`}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 12, borderLeftWidth: 3, borderLeftColor: t.accent }}
+                >
                   <CircleAlert size={22} color={t.accent} />
                   <View style={{ flex: 1, gap: 2 }}>
                     <Text style={{ color: t.text, fontSize: 15, fontWeight: "700" }}>{a.text}</Text>
@@ -63,17 +66,37 @@ export default function OwnerDashboard() {
           </Section>
 
           <Section title={monthName(d.month.month)}>
+            <Card dark style={{ gap: 6, padding: 18 }}>
+              <View style={{ width: 28, height: 4, borderRadius: 1, backgroundColor: t.accent, marginBottom: 6 }} />
+              <Text style={{ color: t.graphiteMuted, fontSize: 13, fontWeight: "700", letterSpacing: 0.8, textTransform: "uppercase" }}>
+                Заработок за месяц
+              </Text>
+              <Text style={{ color: t.graphiteText, fontSize: 34, fontWeight: "800", letterSpacing: -0.8 }}>{formatRub(d.month.result.profit)}</Text>
+              <Text style={{ color: t.graphiteMuted, fontSize: 13 }}>по закрытым заявкам, после выплат мастерам и налога</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18, marginTop: 10, paddingTop: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.1)" }}>
+                <Figure label="Поступило" value={formatRub(d.month.cashIn)} />
+                <Figure label="Мастерам" value={formatRub(d.month.result.payouts)} />
+                <Figure label="Налог" value={formatRub(d.month.result.tax)} />
+              </View>
+            </Card>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
               <Stat label="Новых заявок" value={String(d.month.newRequests)} />
               <Stat label="Закрыто" value={String(d.month.closed)} />
-              <Stat label="Поступило" value={formatRub(d.month.cashIn)} hint="оплаты по счетам" />
-              <Stat label="Заработок" value={formatRub(d.month.result.profit)} hint="по закрытым заявкам" accent />
-              <Stat label="Выплаты мастерам" value={formatRub(d.month.result.payouts)} />
-              <Stat label="Налог" value={formatRub(d.month.result.tax)} />
             </View>
           </Section>
         </>
       ) : null}
     </Screen>
+  );
+}
+
+/** Цифра на тёмной карточке месяца. */
+function Figure({ label, value }: { label: string; value: string }) {
+  const t = useTheme();
+  return (
+    <View style={{ gap: 2, minWidth: 90 }}>
+      <Text style={{ color: t.graphiteMuted, fontSize: 12, fontWeight: "600" }}>{label}</Text>
+      <Text style={{ color: t.graphiteText, fontSize: 17, fontWeight: "800" }}>{value}</Text>
+    </View>
   );
 }

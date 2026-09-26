@@ -236,20 +236,24 @@ select.input {
 }
 .logo {
   display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 800;
-  font-size: 20px;
-  letter-spacing: -0.03em;
+  flex-shrink: 0;
+  color: var(--ink);
   text-decoration: none;
 }
-.logo small {
+.logo svg {
   display: block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-  line-height: 1.2;
+  height: 40px;
+  width: auto;
+  fill: currentColor;
+}
+.logo .logo-first {
+  fill: var(--accent);
+}
+.logo .logo-tag {
+  font-family: var(--font);
+  font-size: 15.5px;
+  font-weight: 700;
+  fill: var(--muted);
 }
 .only-sm {
   display: inline;
@@ -266,12 +270,9 @@ select.input {
   }
 }
 @media (max-width: 420px) {
-  .site-header .logo small {
-    display: none;
+  .site-header .logo svg {
+    height: 34px;
   }
-}
-.logo small {
-  white-space: nowrap;
 }
 .nav {
   display: none;
@@ -819,8 +820,8 @@ select.input {
 .site-footer .logo {
   color: var(--dark-ink);
 }
-.site-footer .logo small {
-  color: var(--dark-muted);
+.site-footer .logo .logo-tag {
+  fill: var(--dark-muted);
 }
 .site-footer a {
   color: var(--dark-ink);
