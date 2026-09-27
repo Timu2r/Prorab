@@ -86,6 +86,8 @@ export type MasterRequestItem = Base & {
   client: { name: string; phone: string } | null;
   pay: number | null;
   mine: boolean;
+  /** Помощник в бригаде заказа: видит задание, действует старший, платит тоже старший. */
+  helper: boolean;
   assignedTo: { id: string; name: string } | null;
 };
 
@@ -209,6 +211,7 @@ export type OwnerRequestDetail = OwnerRequestItem &
     purchases: Purchase[];
     extraWork: ExtraWork[];
     acts: Act[];
+    crew: CrewMember[];
     payouts: Payout[];
     money: { revenue: number; goodsCost: number; payouts: number; tax: number; profit: number };
     doneAt: string | null;
@@ -230,7 +233,42 @@ export type MasterTaskDetail = MasterRequestItem & {
   extraWork: ExtraWork[];
   purchases: Purchase[];
   acts: Act[];
-  role: "master" | "lead";
+  crew: CrewMember[];
+  /** Для помощника — старший мастер и его телефон. */
+  lead: { name: string; phone: string } | null;
+  role: "master" | "lead" | "helper";
+};
+
+/** Помощник в бригаде заказа (docs/TZ.md, 16.6): роль и, если нужно, свои дни. */
+export type CrewMember = { masterId: string; name: string; phone: string; role: string; dayFrom: string | null; dayTo: string | null };
+
+/** Календарь занятости: по мастеру — занятые окна каждого дня; по направлению — сколько свободно. */
+export type CalendarWeek = {
+  from: string;
+  days: string[];
+  windows: { from: number; to: number }[];
+  masters: { id: string; name: string; skills: Category[]; available: boolean; isLead: boolean; days: boolean[][] }[];
+  directions: { category: Category; total: number; free: number[] }[];
+};
+
+export type DayPlan = {
+  date: string;
+  items: {
+    kind: "visit" | "survey";
+    id: string;
+    number: string;
+    status: RequestStatus;
+    category: Category;
+    district: string;
+    address: string;
+    at: string;
+    until: string | null;
+    client: { name: string; phone: string };
+    price: number | null;
+    foreman: string | null;
+    crew: { name: string; role: string }[];
+  }[];
+  unscheduled: { id: string; number: string; status: RequestStatus; category: Category; client: string; price: number | null }[];
 };
 
 export type ClientRequestDetail = ClientRequestItem &

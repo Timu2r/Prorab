@@ -187,6 +187,22 @@ export const schemas = {
     })
     .refine((p) => p.kind === "need" || p.amount !== null, { message: "Укажите, сколько потратили", path: ["amount"] }),
   resolvePurchase: z.object({ status: z.enum(["done", "approved", "rejected"]), amount: kopecks.positive().optional() }),
+
+  // Бригада заказа: помощники старшего, их роль и дни
+  crew: z.object({
+    members: z
+      .array(
+        z.object({
+          masterId: id,
+          role: z.string().trim().min(2, "Напишите, за что отвечает помощник").max(60),
+          dayFrom: date.nullable().default(null),
+          dayTo: date.nullable().default(null),
+        }),
+      )
+      .max(10, "Не больше 10 помощников"),
+  }),
+  calendar: z.object({ from: date, days: z.coerce.number().int().min(1).max(31).default(7) }),
+  day: z.object({ date }),
   fileGet: z.object({ exp: z.string().optional(), sig: z.string().optional() }),
 
   // Смета

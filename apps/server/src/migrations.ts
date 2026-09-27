@@ -423,6 +423,23 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
       );
       CREATE INDEX purchases_request ON purchases (request_id);`,
   },
+  {
+    // Бригада на заказ (docs/TZ.md, 16.6): старший — мастер заявки (requests.master_id), помощники — здесь, со своей
+    // ролью и, если нужно, своими днями внутри срока работ. Помощникам платит старший (решение владельца 2026-09-27).
+    id: 11,
+    sql: () => `
+      CREATE TABLE request_crew (
+        request_id  text NOT NULL REFERENCES requests(id),
+        master_id   text NOT NULL REFERENCES masters(user_id),
+        role        text NOT NULL,
+        day_from    date,
+        day_to      date,
+        added_by    text REFERENCES users(id),
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (request_id, master_id)
+      );
+      CREATE INDEX request_crew_master ON request_crew (master_id);`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

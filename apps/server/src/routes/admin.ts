@@ -33,6 +33,13 @@ export function adminRoutes(app: FastifyInstance, s: Services) {
 
   // Сводка, отчёты, настройки
   app.get("/admin/dashboard", async (req) => (need(req, "owner"), { dashboard: await s.dashboard.dashboard() }));
+  // Календарь занятости и план дня (docs/TZ.md, 16.6)
+  app.get("/admin/calendar", async (req) => {
+    need(req, "owner");
+    const { from, days } = query(schemas.calendar, req);
+    return { calendar: await s.calendar.week(from, days) };
+  });
+  app.get("/admin/day", async (req) => (need(req, "owner"), { day: await s.calendar.day(query(schemas.day, req).date) }));
   app.get("/admin/reports/money", async (req) => (need(req, "owner"), { report: await s.dashboard.money(query(schemas.month, req).month) }));
   app.get("/admin/reports/funnel", async (req) => {
     need(req, "owner");

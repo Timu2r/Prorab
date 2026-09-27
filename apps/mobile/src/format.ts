@@ -18,9 +18,13 @@ export function formatTime(v: string | Date): string {
   return `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;
 }
 
-/** «27.09, 10:00–12:00» или null, если визит не назначен. */
+/**
+ * «27.09, 10:00–12:00»; работы на несколько дней — «03.10–05.10, 09:00–18:00» (docs/TZ.md, 16.6).
+ * null — визит не назначен.
+ */
 export function formatVisit(at: string | null, until: string | null): string | null {
   if (!at) return null;
+  if (until && formatDate(until) !== formatDate(at)) return `${formatDayMonth(at)}–${formatDayMonth(until)}, ${formatTime(at)}–${formatTime(until)}`;
   return `${formatDayMonth(at)}, ${formatTime(at)}${until ? `–${formatTime(until)}` : ""}`;
 }
 

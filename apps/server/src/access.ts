@@ -4,10 +4,11 @@ import type { Queryable } from "./db";
 import { ApiError } from "./util";
 
 /**
- * В какой роли человек действует с конкретной заявкой. lead — бригадир по заданию своего мастера. viewer — только
+ * В какой роли человек действует с конкретной заявкой. lead — бригадир по заданию своего мастера. helper — помощник
+ * в бригаде заказа (docs/TZ.md, 16.6): видит задание, но действует старший. viewer — только
  * смотрит заявку, отправленную с его браузера: ключ без кода или чужой номер в заявке (docs/TZ.md, 16.4).
  */
-export type Actor = "owner" | "lead" | "master" | "client" | "viewer";
+export type Actor = "owner" | "lead" | "master" | "helper" | "client" | "viewer";
 
 /** Кто смотрит: пользователь и его ключ. По ключу видны заявки, отправленные с этого браузера. */
 export type Viewer = User & { sessionId?: string; scope?: SessionScope };
@@ -57,6 +58,8 @@ export type RequestRow = {
   updated_at: Date;
   /** Прораб заказа — кто ведёт заказ от компании и отвечает клиенту (docs/TZ.md, 16.6). */
   foreman_id: string | null;
+  /** Помощники в бригаде заказа (request_crew). */
+  crew_ids: string[];
   client_name: string;
   client_phone: string;
   master_name: string | null;
@@ -69,7 +72,8 @@ export type RequestRow = {
 export const REQUEST_SELECT = `
   SELECT r.*, to_char(r.wanted_date, 'YYYY-MM-DD') AS wanted_date, to_char(r.warranty_until, 'YYYY-MM-DD') AS warranty_until,
          c.name AS client_name, c.phone AS client_phone, m.name AS master_name, m.phone AS master_phone,
-         mm.is_lead AS master_is_lead, f.name AS foreman_name, f.phone AS foreman_phone
+         mm.is_lead AS master_is_lead, f.name AS foreman_name, f.phone AS foreman_phone,
+         ARRAY(SELECT rc.master_id FROM request_crew rc WHERE rc.request_id = r.id) AS crew_ids
   FROM requests r
   JOIN users c ON c.id = r.client_id
   LEFT JOIN users m ON m.id = r.master_id
@@ -89,12 +93,13 @@ export async function masterInfo(q: Queryable, user: User): Promise<MasterInfo |
   return { isLead: true, team: rows.map((r) => r.user_id) };
 }
 
-export function actorFor(user: User, r: Pick<RequestRow, "client_id" | "master_id">, mi: MasterInfo | null): Actor | null {
+export function actorFor(user: User, r: Pick<RequestRow, "client_id" | "master_id"> & { crew_ids?: string[] }, mi: MasterInfo | null): Actor | null {
   if (user.roles.includes("owner")) return "owner";
   if (mi && r.master_id) {
     if (r.master_id === user.id) return "master";
     if (mi.isLead && mi.team.includes(r.master_id)) return "lead";
   }
+  if (mi && r.crew_ids?.includes(user.id)) return "helper";
   if (r.client_id === user.id) return "client";
   return null;
 }

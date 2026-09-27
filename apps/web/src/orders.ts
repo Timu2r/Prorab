@@ -62,12 +62,14 @@ export type MasterState = keyof typeof MASTER_STATE_LABELS;
 const MSK = 3 * 3_600_000;
 const two = (n: number) => String(n).padStart(2, "0");
 
-/** Окно визита по Москве: «30.09, 09:00–12:00». */
+/** Окно визита по Москве: «30.09, 09:00–12:00»; работы на несколько дней — «03.10–05.10, 09:00–18:00». */
 export function visitText(at: string, until: string | null): string {
   const f = (v: string) => new Date(new Date(v).getTime() + MSK);
   const a = f(at);
   const t = (d: Date) => `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;
-  return `${two(a.getUTCDate())}.${two(a.getUTCMonth() + 1)}, ${t(a)}${until ? `–${t(f(until))}` : ""}`;
+  const dm = (d: Date) => `${two(d.getUTCDate())}.${two(d.getUTCMonth() + 1)}`;
+  if (until && dm(f(until)) !== dm(a)) return `${dm(a)}–${dm(f(until))}, ${t(a)}–${t(f(until))}`;
+  return `${dm(a)}, ${t(a)}${until ? `–${t(f(until))}` : ""}`;
 }
 
 /** Дата по Москве: «27.09.2026». Строка вида 2026-09-27 — уже дата, без пересчёта. */

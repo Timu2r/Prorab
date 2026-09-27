@@ -5,16 +5,36 @@ import { Linking, Text, View } from "react-native";
 import { api, errorText } from "../api";
 import { formatDayMonth, formatTime, isToday } from "../format";
 import { useTheme } from "../theme";
-import type { MasterView } from "../types";
+import type { CalendarWeek, MasterView } from "../types";
 import { Button, Card, confirm, Empty, Pill, Section, type Tone } from "../ui";
 
 type Load = { tone: Tone; text: string; rank: number };
 
-/** Свободен / занят / не принимает заказы — подсказка при выборе, а не запрет. */
-function load(m: MasterView): Load {
-  if (!m.available) return { tone: "danger", text: "Не принимает заказы", rank: 2 };
+/** Свободен / занят в это время / не принимает заказы — подсказка при выборе, а не запрет. */
+function load(m: MasterView, busyThen: boolean): Load {
+  if (!m.available) return { tone: "danger", text: "Не принимает заказы", rank: 3 };
+  if (busyThen) return { tone: "accent", text: "Занят в это время", rank: 2 };
   if (m.activeJobs === 0) return { tone: "success", text: "Свободен", rank: 0 };
   return { tone: "neutral", text: `В работе: ${m.activeJobs}`, rank: 1 };
+}
+
+const MSK = 3 * 3_600_000;
+const HOUR = 3_600_000;
+const mskDate = (ms: number) => new Date(ms + MSK).toISOString().slice(0, 10);
+
+/** Кто из мастеров занят в окна, которые пересекает визит этой заявки (календарь, docs/TZ.md, 16.6). */
+function busyAt(cal: CalendarWeek, at: string, until: string | null): Set<string> {
+  const a = new Date(at).getTime();
+  const b = until ? new Date(until).getTime() : a + 3 * HOUR;
+  const out = new Set<string>();
+  cal.days.forEach((d, i) => {
+    const base = Date.parse(`${d}T00:00:00Z`) - MSK;
+    cal.windows.forEach((w, k) => {
+      if (!(a < base + w.to * HOUR && b > base + w.from * HOUR)) return;
+      for (const m of cal.masters) if (m.days[i]?.[k]) out.add(m.id);
+    });
+  });
+  return out;
 }
 
 /**
@@ -26,12 +46,16 @@ export function AssignPanel({
   category,
   status,
   master,
+  visitAt,
+  visitUntil,
   onChanged,
 }: {
   requestId: string;
   category: Category;
   status: RequestStatus;
   master: { id: string; name: string; phone: string } | null;
+  visitAt?: string | null;
+  visitUntil?: string | null;
   onChanged: () => Promise<void> | void;
 }) {
   const t = useTheme();
@@ -41,20 +65,38 @@ export function AssignPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const can = canAssign(status) || canReassign(status);
 
+  const [busyThen, setBusyThen] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (!open || masters) return;
     api<{ masters: MasterView[] }>("GET", "/admin/masters")
       .then((r) => setMasters(r.masters))
       .catch((e) => setError(errorText(e)));
-  }, [open, masters]);
+    if (visitAt) {
+      const first = mskDate(new Date(visitAt).getTime());
+      const last = mskDate(new Date(visitUntil ?? visitAt).getTime());
+      const days = Math.round((Date.parse(last) - Date.parse(first)) / 86_400_000) + 1;
+      api<{ calendar: CalendarWeek }>("GET", `/admin/calendar?from=${first}&days=${Math.min(days, 31)}`)
+        .then((r) => setBusyThen(busyAt(r.calendar, visitAt, visitUntil ?? null)))
+        .catch(() => {});
+    }
+  }, [open, masters, visitAt, visitUntil]);
 
+  const loadOf = (m: MasterView) => load(m, busyThen.has(m.id));
   const suitable = (masters ?? [])
     .filter((m) => m.active && m.id !== master?.id && (category === "general" || m.skills.includes(category)))
-    .sort((a, b) => load(a).rank - load(b).rank || a.activeJobs - b.activeJobs || a.name.localeCompare(b.name));
+    .sort((a, b) => loadOf(a).rank - loadOf(b).rank || a.activeJobs - b.activeJobs || a.name.localeCompare(b.name));
 
   const assign = async (m: MasterView) => {
-    const l = load(m);
-    const warn = l.rank === 2 ? `\n\n${m.name} отметил, что сейчас не принимает заказы.` : l.rank === 1 ? `\n\nУ мастера уже ${m.activeJobs} в работе.` : "";
+    const l = loadOf(m);
+    const warn =
+      l.rank === 3
+        ? `\n\n${m.name} отметил, что сейчас не принимает заказы.`
+        : l.rank === 2
+          ? `\n\nВ это время у ${m.name} уже есть работа.`
+          : l.rank === 1
+            ? `\n\nУ мастера уже ${m.activeJobs} в работе.`
+            : "";
     if (!(await confirm(`Назначить: ${m.name}?`, `Мастер получит задание и примет его в приложении. Адрес и телефон клиента откроются ему после «Принять».${warn}`, "Назначить")))
       return;
     setBusy(m.id);
@@ -96,7 +138,7 @@ export function AssignPanel({
           {masters === null && !error ? <Text style={{ color: t.muted }}>Загрузка…</Text> : null}
           {masters && suitable.length === 0 ? <Empty icon={HardHat} title="Нет подходящих мастеров" text="Добавьте мастера с этим направлением в разделе «Мастера»" /> : null}
           {suitable.map((m) => {
-            const l = load(m);
+            const l = loadOf(m);
             return (
               <Card key={m.id} onPress={busy ? undefined : () => void assign(m)} style={{ gap: 6, opacity: busy && busy !== m.id ? 0.5 : 1 }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>

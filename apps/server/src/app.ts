@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { ZodError } from "zod";
 import { CatalogService, MasterService } from "./admin";
 import { AuthService, type AuthConfig, type CodeSender } from "./auth";
+import { CalendarService } from "./calendar";
 import { ClientService } from "./clients";
 import { DashboardService } from "./dashboard";
 import type { Db } from "./db";
@@ -36,6 +37,7 @@ export type Services = {
   invoices: InvoiceService;
   payouts: PayoutService;
   purchases: PurchaseService;
+  calendar: CalendarService;
   files: FileService;
   catalog: CatalogService;
   masters: MasterService;
@@ -58,6 +60,7 @@ export async function buildApp(db: Db, sender: CodeSender, cfg: AppConfig) {
     invoices: new InvoiceService(db),
     payouts,
     purchases: new PurchaseService(db, files),
+    calendar: new CalendarService(db),
     files,
     catalog: new CatalogService(db),
     masters: new MasterService(db),

@@ -22,6 +22,7 @@ import { Button, Card, ErrorBox, Loading, Pill, Screen, Section, statusTone } fr
 import { useApi } from "../useApi";
 import { AssignPanel } from "./AssignPanel";
 import { EstimateBlock } from "./EstimateBlock";
+import { CrewPanel } from "./CrewPanel";
 import { AcceptanceBlock, CloseBlock, InvoicesBlock, PayoutsBlock, WorkReport } from "./OwnerFinish";
 import { VisitPicker } from "./VisitPicker";
 
@@ -64,8 +65,17 @@ export function OwnerRequest({ id }: { id: string }) {
           <EstimateBlock requestId={r.id} number={r.number} status={r.status} client={r.client} estimates={r.estimates} onChanged={reload} />
           <ContractCard requestId={r.id} contract={r.contract} />
           <InvoicesBlock r={r} onChanged={reload} />
-          <VisitPicker requestId={r.id} visitAt={r.visitAt} visitUntil={r.visitUntil} onChanged={reload} />
-          <AssignPanel requestId={r.id} category={r.category} status={r.status} master={r.master} onChanged={reload} />
+          <VisitPicker requestId={r.id} category={r.category} visitAt={r.visitAt} visitUntil={r.visitUntil} onChanged={reload} />
+          <AssignPanel requestId={r.id} category={r.category} status={r.status} master={r.master} visitAt={r.visitAt} visitUntil={r.visitUntil} onChanged={reload} />
+          <CrewPanel
+            requestId={r.id}
+            lead={r.master ? { id: r.master.id, name: r.master.name } : null}
+            crew={r.crew}
+            visitAt={r.visitAt}
+            visitUntil={r.visitUntil}
+            locked={FINISHED.includes(r.status)}
+            onChanged={reload}
+          />
           <WorkReport r={r} onChanged={reload} />
           <AcceptanceBlock r={r} onChanged={reload} />
           <CloseBlock r={r} onChanged={reload} />
@@ -79,6 +89,8 @@ export function OwnerRequest({ id }: { id: string }) {
 
 /** Выезд на объект планируют до договора; после — только если время уже назначено. */
 const SURVEY_STATUSES: RequestStatus[] = ["new", "agreed", "invoiced", "prepaid"];
+/** После «Готово» бригаду не меняют. */
+const FINISHED: RequestStatus[] = ["done", "act_signed", "paid", "closed", "cancelled"];
 
 function ClientCard({ r }: { r: OwnerRequestDetail }) {
   const t = useTheme();
@@ -247,6 +259,7 @@ const EVENT_LABELS: Record<string, string> = {
   payout_accrued: "Начислена выплата мастеру",
   purchase_added: "Мастер: покупка по ходу работ",
   purchase_resolved: "Решение по покупке мастера",
+  crew_changed: "Изменена бригада",
 };
 
 function History({ events }: { events: RequestEvent[] }) {

@@ -37,7 +37,8 @@ export default function MasterJobs() {
     }
   };
   const { data, error, loading, refreshing, reload } = useApi<{ requests: MasterRequestItem[] }>("/requests");
-  const mine = (data?.requests ?? []).filter((r) => r.mine);
+  // Свои задания и заказы, где мастер — помощник в бригаде (задания команды бригадира — во вкладке «Команда»)
+  const mine = (data?.requests ?? []).filter((r) => r.mine || r.helper);
   const count = (k: Tab) => mine.filter((r) => tabOf(r) === k).length;
   const list = mine.filter((r) => tabOf(r) === tab);
   const options: { value: Tab; label: string; count?: number }[] = [
@@ -73,7 +74,7 @@ export default function MasterJobs() {
           line={r.address ?? r.district ?? undefined}
           visitAt={r.visitAt}
           visitUntil={r.visitUntil}
-          amount={r.pay === null ? "Сумма уточняется" : `Вам ${formatRub(r.pay)}`}
+          amount={r.helper ? `Помощник · старший ${r.assignedTo?.name ?? ""}` : r.pay === null ? "Сумма уточняется" : `Вам ${formatRub(r.pay)}`}
           onPress={() => router.push(`/request/${r.id}`)}
         />
       ))}

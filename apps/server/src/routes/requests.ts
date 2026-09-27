@@ -37,6 +37,8 @@ export function requestRoutes(app: FastifyInstance, s: Services) {
     return { request: await s.requests.review(need(req), id(req), b.rating, b.text) };
   });
 
+  app.put("/requests/:id/crew", async (req) => ({ request: await s.requests.setCrew(need(req), id(req), body(schemas.crew, req).members) }));
+
   // Покупки мастера по ходу работ и решение прораба (docs/TZ.md, 16.9)
   app.post("/requests/:id/purchases", async (req, reply) =>
     reply.status(201).send({ purchases: await s.purchases.add(need(req), id(req), body(schemas.newPurchase, req)) }),

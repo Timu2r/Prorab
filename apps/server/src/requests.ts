@@ -109,15 +109,27 @@ const MASTER_STATE: Partial<Record<RequestStatus, "accepted" | "en_route" | "on_
  * Кто работает по заявке — для клиента (docs/TZ.md, 16.4): прораб заказа с телефоном и мастера без телефонов —
  * связь с клиентом идёт через прораба. Бригада из нескольких мастеров с ролями — этап L.
  */
-function clientTeam(r: RequestRow) {
+function clientTeam(r: RequestRow, crew: Crew) {
   const state = MASTER_STATE[r.status];
+  const lead = crew.length ? "Старший мастер" : r.master_is_lead ? "Бригадир" : "Мастер";
   return {
     foreman: r.foreman_id ? { name: r.foreman_name ?? "", phone: r.foreman_phone ?? "" } : null,
     team:
       r.master_id && state
-        ? [{ name: shortName(r.master_name ?? ""), role: r.master_is_lead ? "Бригадир" : "Мастер", area: CATEGORY_LABELS[r.category as Category] ?? "", state }]
+        ? [
+            { name: shortName(r.master_name ?? ""), role: lead, area: CATEGORY_LABELS[r.category as Category] ?? "", state },
+            ...crew.map((c) => ({ name: shortName(c.name), role: c.role, area: days(c.dayFrom, c.dayTo), state })),
+          ]
         : [],
   };
+}
+
+/** Дни помощника для клиента: «3.10» или «4.10–5.10»; весь срок — пусто. */
+function days(from: string | null, to: string | null): string {
+  const f = (d: string) => `${Number(d.slice(8, 10))}.${d.slice(5, 7)}`;
+  if (!from && !to) return "";
+  if (from && to && from !== to) return `${f(from)}–${f(to)}`;
+  return f((from ?? to)!);
 }
 
 /** Строка списка для клиента: его суммы и имя мастера. */
@@ -135,18 +147,34 @@ function clientItem(r: RequestRow) {
   };
 }
 
-/** Строка списка для мастера и бригадира: никаких цен клиента (правило 1), контакты — после «Принять» (правило 2). */
-function masterItem(r: RequestRow, me: string, pay: number | null) {
+/**
+ * Строка списка для мастера и бригадира: никаких цен клиента (правило 1), контакты — после «Принять» (правило 2).
+ * Помощник в бригаде видит адрес, когда старший принял задание, но не телефон клиента и не сумму: ему платит старший.
+ */
+function masterItem(r: RequestRow, me: string, pay: number | null, helper = false) {
   const open = contactsOpen(r);
   return {
     ...base(r),
     ...(open ? address(r) : { address: null, apartment: null, entrance: null, floor: null, intercom: null }),
-    client: open ? { name: r.client_name, phone: r.client_phone } : null,
-    pay,
+    client: open && !helper ? { name: r.client_name, phone: r.client_phone } : null,
+    pay: helper ? null : pay,
     mine: r.master_id === me,
+    helper,
     assignedTo: r.master_id ? { id: r.master_id, name: r.master_name ?? "" } : null,
   };
 }
+
+/** Бригада заказа: помощники старшего со своей ролью и, если нужно, своими днями. */
+export async function loadCrew(q: Queryable, requestId: string) {
+  const rows = await q.query<{ master_id: string; name: string; phone: string; role: string; day_from: string | null; day_to: string | null }>(
+    `SELECT c.master_id, u.name, u.phone, c.role, to_char(c.day_from, 'YYYY-MM-DD') AS day_from, to_char(c.day_to, 'YYYY-MM-DD') AS day_to
+     FROM request_crew c JOIN users u ON u.id = c.master_id WHERE c.request_id = $1 ORDER BY c.created_at`,
+    [requestId],
+  );
+  return rows.map((c) => ({ masterId: c.master_id, name: c.name, phone: c.phone, role: c.role, dayFrom: c.day_from, dayTo: c.day_to }));
+}
+
+type Crew = Awaited<ReturnType<typeof loadCrew>>;
 
 export type NewRequest = {
   category: string;
@@ -401,7 +429,8 @@ export class RequestService {
     if (user.roles.includes("owner")) as = "owner";
     else if (mi) {
       as = "master";
-      add(`r.master_id = ANY($1::text[])`, mi.team);
+      // Свои задания, задания команды бригадира и заказы, где мастер — помощник в бригаде
+      add(`(r.master_id = ANY($1::text[]) OR r.id IN (SELECT request_id FROM request_crew WHERE master_id = $2))`, mi.team, user.id);
     } else {
       as = "client";
       const fromBrowser = `r.id IN (SELECT request_id FROM session_requests WHERE session_id = $1)`;
@@ -431,11 +460,15 @@ export class RequestService {
   }
 
   private async masterItems(q: Queryable, user: User, rows: RequestRow[]) {
+    const mi = await masterInfo(q, user);
+    const team = mi?.team ?? [user.id];
+    // Помощник — не старший и не из команды бригадира: сумму заказа ему не показываем
+    const helperOf = (r: RequestRow) => !(r.master_id && team.includes(r.master_id)) && r.crew_ids.includes(user.id);
     const pay = new Map<string, number | null>();
     const byMaster = new Map<string, string[]>();
-    for (const r of rows) if (r.master_id) byMaster.set(r.master_id, [...(byMaster.get(r.master_id) ?? []), r.id]);
+    for (const r of rows) if (r.master_id && !helperOf(r)) byMaster.set(r.master_id, [...(byMaster.get(r.master_id) ?? []), r.id]);
     for (const [masterId, ids] of byMaster) for (const [id, v] of await payForecast(q, masterId, ids)) pay.set(id, v);
-    return rows.map((r) => masterItem(r, user.id, pay.get(r.id) ?? null));
+    return rows.map((r) => masterItem(r, user.id, pay.get(r.id) ?? null, helperOf(r)));
   }
 
   /** Мастер, который сам заказывал как клиент, видит свои заказы отдельно от заданий. */
@@ -518,6 +551,7 @@ export class RequestService {
         acts,
         extraWork: await this.extraWork(q, id),
         purchases: await loadPurchases(q, this.files, id),
+        crew: await loadCrew(q, id),
         payouts,
         payForecast: forecast,
         money: requestResult({ revenue, goodsCost: approved?.totals.cost ?? 0, payouts: paid }, settings.taxPercent),
@@ -529,7 +563,7 @@ export class RequestService {
       const contract = await loadContract(q, id);
       return {
         ...clientItem(r),
-        ...clientTeam(r),
+        ...clientTeam(r, await loadCrew(q, id)),
         /** Номер из заявки — чтобы подтвердить его кодом, не вводя заново. */
         phone: r.client_phone,
         /** Согласовать смету, принять работу — только владелец номера после кода. viewer только смотрит. */
@@ -553,8 +587,12 @@ export class RequestService {
       materials: (est?.items ?? []).filter((i) => i.kind !== "work").map((i) => ({ id: i.id, name: i.name, unit: i.unit, qty: i.qty, usedQty: i.usedQty })),
       files: await this.fileViews(q, id),
       extraWork: await this.extraWork(q, id),
-      purchases: (await loadPurchases(q, this.files, id)).filter((p) => p.master.id === user.id),
+      purchases: as === "helper" ? [] : (await loadPurchases(q, this.files, id)).filter((p) => p.master.id === user.id),
       acts: await this.acts(q, id),
+      // Бригада: помощник видит, кто старший и как с ним связаться; телефоны помощников — старшему
+      crew: (await loadCrew(q, id)).map((c) => ({ ...c, phone: as === "helper" ? "" : c.phone })),
+      // Помощнику — кто старший и как с ним связаться; старшему и бригадиру это поле ни к чему
+      lead: as === "helper" && r.master_id ? { name: r.master_name ?? "", phone: r.master_phone ?? "" } : null,
       role: as,
     };
   }
@@ -594,7 +632,8 @@ export class RequestService {
   async setStatus(user: User, id: string, to: RequestStatus, reason: string) {
     await this.db.tx(async (q) => {
       const { r, as } = await loadFor(q, user, id);
-      if (as === "lead" || as === "viewer" || !canTransition(r.status, to, as)) throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
+      if (as === "lead" || as === "viewer" || as === "helper" || !canTransition(r.status, to, as))
+        throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
       const by: By = { userId: user.id, role: as };
       if (to === "cancelled") {
         if (!reason.trim()) throw new ApiError(400, "reason_required", "Укажите причину отмены");
@@ -640,6 +679,40 @@ export class RequestService {
     const { warrantyMonths } = await this.settings.get(q);
     await q.query(`UPDATE requests SET warranty_until = $1::date WHERE id = $2`, [addMonths(moscowDate(), warrantyMonths), id]);
     await accruePayout(q, await loadRequest(q, id), by);
+  }
+
+  // ---------- бригада ----------
+
+  /**
+   * Бригада заказа (docs/TZ.md, 16.6): владелец или старший мастер задания задают помощников — роль и, если нужно,
+   * дни внутри срока работ. Список заменяется целиком. Помощникам платит старший, выплата по заказу одна.
+   */
+  async setCrew(user: User, id: string, members: { masterId: string; role: string; dayFrom: string | null; dayTo: string | null }[]) {
+    await this.db.tx(async (q) => {
+      const { r, as } = await loadFor(q, user, id);
+      mustBe(as, "owner", "master", "lead");
+      if (isFinal(r) || ["done", "act_signed", "paid"].includes(r.status)) throw new ApiError(409, "final", "Работы уже выполнены — бригаду не поменять");
+      const ids = members.map((m) => m.masterId);
+      if (new Set(ids).size !== ids.length) throw new ApiError(400, "duplicate", "Помощник указан дважды");
+      if (r.master_id && ids.includes(r.master_id)) throw new ApiError(400, "is_lead", "Старший мастер уже в бригаде");
+      for (const m of members) {
+        if (m.dayFrom && m.dayTo && m.dayTo < m.dayFrom) throw new ApiError(400, "bad_days", "Последний день раньше первого");
+        const [x] = await q.query<{ active: boolean }>(`SELECT active FROM masters WHERE user_id = $1`, [m.masterId]);
+        if (!x?.active) throw new ApiError(400, "bad_master", "Мастер не найден или отключён");
+      }
+      await q.query(`DELETE FROM request_crew WHERE request_id = $1`, [id]);
+      for (const m of members)
+        await q.query(`INSERT INTO request_crew (request_id, master_id, role, day_from, day_to, added_by) VALUES ($1, $2, $3, $4, $5, $6)`, [
+          id,
+          m.masterId,
+          m.role.trim(),
+          m.dayFrom,
+          m.dayTo,
+          user.id,
+        ]);
+      await logEvent(q, id, { userId: user.id, role: as }, "crew_changed", { members: members.map((m) => ({ masterId: m.masterId, role: m.role })) });
+    });
+    return this.get(user, id);
   }
 
   // ---------- мастер ----------
@@ -804,6 +877,7 @@ export class RequestService {
         master: ["before", "after", "extra_work", "act_paper", "receipt"],
         owner: ["client_photo", "before", "after", "extra_work", "act_paper", "receipt"],
         lead: [],
+        helper: [],
         viewer: [],
       };
       if (!allowed[as].includes(kind)) throw new ApiError(403, "forbidden", "Этот вид фото вам недоступен");

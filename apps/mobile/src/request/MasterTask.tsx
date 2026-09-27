@@ -1,5 +1,5 @@
 import { CATEGORY_LABELS, formatPhone, formatRub, STATUS_LABELS, UNIT_LABELS, type RequestStatus } from "@ks/core";
-import { CalendarClock, Check, CircleCheck, MapPin, Navigation, Phone, X } from "lucide-react-native";
+import { CalendarClock, Check, CircleCheck, MapPin, Navigation, Phone, UsersRound, X } from "lucide-react-native";
 import { useState } from "react";
 import { Linking, Text, View } from "react-native";
 import { api, errorText } from "../api";
@@ -93,6 +93,33 @@ export function MasterTask({ id }: { id: string }) {
             ) : null}
             {r.pay !== null ? <Text style={{ color: t.text, fontSize: 16, fontWeight: "800" }}>Ваш заработок: {formatRub(r.pay)}</Text> : null}
           </Card>
+
+          {r.role === "helper" ? (
+            <Card style={{ gap: 10, borderColor: t.accent }}>
+              <Text style={{ color: t.text, fontSize: 15, lineHeight: 21 }}>
+                Вы помощник в бригаде этого заказа. Выезд, фото, покупки и «Готово» отмечает старший — он же рассчитывается с вами.
+              </Text>
+              {r.lead ? (
+                <Button small icon={Phone} title={`Старший: ${r.lead.name}${r.lead.phone ? ` · ${formatPhone(r.lead.phone)}` : ""}`} onPress={() => void Linking.openURL(`tel:${r.lead!.phone}`)} />
+              ) : null}
+            </Card>
+          ) : null}
+
+          {r.crew.length ? (
+            <Section title="Бригада">
+              <Card style={{ gap: 8 }}>
+                {r.crew.map((c) => (
+                  <View key={c.masterId} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <UsersRound size={18} color={t.muted} />
+                    <Text style={{ flex: 1, color: t.text, fontSize: 15 }}>
+                      {c.name} <Text style={{ color: t.muted }}>· {c.role}</Text>
+                    </Text>
+                    {c.phone && r.role !== "helper" ? <Button small variant="ghost" icon={Phone} title="Позвонить" onPress={() => void Linking.openURL(`tel:${c.phone}`)} /> : null}
+                  </View>
+                ))}
+              </Card>
+            </Section>
+          ) : null}
 
           {r.status === "assigned" && r.mine ? (
             <View style={{ gap: 10 }}>
