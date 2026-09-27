@@ -18,7 +18,8 @@ export function publicRoutes(app: FastifyInstance, s: Services) {
     const hits = (leadHits.get(req.ip) ?? []).filter((t) => now - t < 3_600_000);
     if (hits.length >= 5) throw new ApiError(429, "too_many", "Слишком много заявок. Попробуйте позже или позвоните нам");
     leadHits.set(req.ip, [...hits, now]);
-    return reply.status(201).send(await s.requests.createLead(b));
+    // Браузер с ключом (своим или после входа) — заявка добавляется к нему; без ключа — выдаём новый
+    return reply.status(201).send(await s.requests.createLead(b, req.user));
   });
 
   // Фото к только что оставленной подробной заявке: тело — сама картинка, подпись — из ответа на заявку

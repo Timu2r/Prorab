@@ -1,5 +1,5 @@
 import { normalizePhone, type Role } from "@ks/core";
-import type { Db } from "./db";
+import type { Db, Queryable } from "./db";
 import { ApiError, newCode, newId, newToken, sha256 } from "./util";
 
 /** Куда отправить код. Сейчас — в лог сервера; на запуске — провайдер кода звонком. */
@@ -25,8 +25,18 @@ const RESEND_AFTER_SEC = 60;
 const MAX_CODES_PER_PHONE_HOUR = 5;
 const MAX_CODES_PER_IP_HOUR = 20;
 const SESSION_DAYS = 90;
+/** Ключ браузера после заявки с сайта живёт дольше: клиент возвращается посмотреть заказ через месяцы. */
+const DEVICE_SESSION_DAYS = 180;
 
 export type User = { id: string; phone: string; name: string; roles: Role[] };
+
+/**
+ * full — вход по коду. device — ключ, который браузер получил вместе с заявкой (docs/TZ.md, 16.4): без кода он
+ * открывает только заявки, отправленные с этого браузера, и только на просмотр. Роли у такого ключа пустые,
+ * даже если в заявке указан номер владельца или мастера.
+ */
+export type SessionScope = "full" | "device";
+export type SessionUser = User & { sessionId: string; scope: SessionScope };
 
 export class AuthService {
   constructor(
@@ -70,7 +80,11 @@ export class AuthService {
     return { phone, resendAfter: RESEND_AFTER_SEC, ...(this.cfg.devCodes ? { devCode: code } : {}) };
   }
 
-  async verify(rawPhone: string, code: string, device: string): Promise<{ token: string; user: User }> {
+  /**
+   * Вход по коду. Если браузер пришёл с ключом заявки (fromDevice), заявки, отправленные с него, остаются видны
+   * и после входа — даже оформленные на другой номер (например, заявка для родителей), а сам ключ закрывается.
+   */
+  async verify(rawPhone: string, code: string, device: string, fromDevice: string | null = null): Promise<{ token: string; user: User }> {
     const phone = normalizePhone(rawPhone);
     if (!phone) throw new ApiError(400, "bad_phone", "Неверный номер");
 
@@ -100,17 +114,28 @@ export class AuthService {
         );
       }
       const token = newToken();
+      const sessionId = newId("ses");
       await q.query(
         `INSERT INTO sessions (id, user_id, token_hash, device, expires_at) VALUES ($1, $2, $3, $4, now() + interval '${SESSION_DAYS} days')`,
-        [newId("ses"), user.id, sha256(token), device.slice(0, 100)],
+        [sessionId, user.id, sha256(token), device.slice(0, 100)],
       );
+      if (fromDevice) {
+        await q.query(
+          `INSERT INTO session_requests (session_id, request_id)
+           SELECT $1, sr.request_id FROM session_requests sr JOIN sessions s ON s.id = sr.session_id
+           WHERE s.id = $2 AND s.scope = 'device'
+           ON CONFLICT DO NOTHING`,
+          [sessionId, fromDevice],
+        );
+        await q.query(`UPDATE sessions SET revoked_at = now() WHERE id = $1 AND scope = 'device' AND revoked_at IS NULL`, [fromDevice]);
+      }
       return { token, user };
     });
   }
 
-  async userByToken(token: string): Promise<(User & { sessionId: string }) | null> {
-    const [row] = await this.db.query<User & { sessionId: string; fresh: boolean }>(
-      `SELECT u.id, u.phone, u.name, u.roles, s.id AS "sessionId",
+  async userByToken(token: string): Promise<SessionUser | null> {
+    const [row] = await this.db.query<SessionUser & { fresh: boolean }>(
+      `SELECT u.id, u.phone, u.name, u.roles, s.id AS "sessionId", s.scope,
               (s.last_used_at IS NOT NULL AND s.last_used_at > now() - interval '5 minutes') AS fresh
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.deleted_at IS NULL`,
@@ -120,10 +145,11 @@ export class AuthService {
     // Отметка активности — не чаще раза в 5 минут, чтобы не писать в базу на каждый запрос
     if (!row.fresh) {
       await this.db.query(`UPDATE sessions SET last_used_at = now() WHERE id = $1`, [row.sessionId]);
-      await this.db.query(`UPDATE users SET last_seen_at = now() WHERE id = $1`, [row.id]);
+      if (row.scope === "full") await this.db.query(`UPDATE users SET last_seen_at = now() WHERE id = $1`, [row.id]);
     }
     const { fresh: _fresh, ...user } = row;
-    return user;
+    // Ключ без кода не несёт ролей: номер владельца в заявке не открывает панель владельца
+    return user.scope === "device" ? { ...user, roles: [] } : user;
   }
 
   /**
@@ -149,4 +175,26 @@ export class AuthService {
   async logout(sessionId: string) {
     await this.db.query(`UPDATE sessions SET revoked_at = now() WHERE id = $1`, [sessionId]);
   }
+}
+
+/**
+ * Заявка с сайта попадает в «Мои заказы» этого браузера. Пришёл с ключом — заявка добавляется к нему (null в ответе:
+ * новый ключ не нужен); без ключа — выдаётся новый на клиента из заявки.
+ */
+export async function linkLead(q: Queryable, requestId: string, clientId: string, session: SessionUser | null): Promise<string | null> {
+  if (session) {
+    await q.query(`INSERT INTO session_requests (session_id, request_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [session.sessionId, requestId]);
+    if (session.scope === "device")
+      await q.query(`UPDATE sessions SET expires_at = GREATEST(expires_at, now() + interval '${DEVICE_SESSION_DAYS} days') WHERE id = $1`, [session.sessionId]);
+    return null;
+  }
+  const token = newToken();
+  const sessionId = newId("ses");
+  await q.query(
+    `INSERT INTO sessions (id, user_id, token_hash, device, scope, expires_at)
+     VALUES ($1, $2, $3, 'web', 'device', now() + interval '${DEVICE_SESSION_DAYS} days')`,
+    [sessionId, clientId, sha256(token)],
+  );
+  await q.query(`INSERT INTO session_requests (session_id, request_id) VALUES ($1, $2)`, [sessionId, requestId]);
+  return token;
 }

@@ -12,7 +12,7 @@ import {
   type RequestStatus,
 } from "@ks/core";
 import { router } from "expo-router";
-import { Calculator, CalendarHeart, FileSignature, MapPin, MessageCircle, Phone, PhoneCall } from "lucide-react-native";
+import { Calculator, CalendarHeart, FileSignature, MapPin, MessageCircle, Phone, PhoneCall, UserRound } from "lucide-react-native";
 import { Image, Linking, Pressable, Text, View } from "react-native";
 import { fileUrl } from "../api";
 import { ago, formatDate, formatTime } from "../format";
@@ -85,6 +85,14 @@ function ClientCard({ r }: { r: OwnerRequestDetail }) {
         <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
           <MapPin size={18} color={place ? t.accent : t.muted} style={{ marginTop: 2 }} />
           <Text style={{ flex: 1, color: place ? t.text : t.muted, fontSize: 15, lineHeight: 21 }}>{place || "Адрес не указан — уточните при звонке"}</Text>
+        </View>
+        <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
+          <UserRound size={18} color={r.foreman ? t.accent : t.muted} style={{ marginTop: 2 }} />
+          <Text style={{ flex: 1, color: t.muted, fontSize: 14, lineHeight: 20 }}>
+            {r.foreman
+              ? `Прораб заказа — ${r.foreman.name || "без имени: укажите имя в профиле"}. Клиент видит его имя и телефон в «Мои заказы» на сайте.`
+              : "Прораб заказа появится с вашим первым действием по заявке: клиент увидит его имя и телефон."}
+          </Text>
         </View>
       </Card>
     </Section>

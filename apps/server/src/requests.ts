@@ -1,5 +1,6 @@
 import {
   CALCULATORS,
+  CATEGORY_LABELS,
   canAssign,
   canReassign,
   canTransition,
@@ -12,10 +13,11 @@ import {
   quote,
   requestResult,
   unassignTarget,
+  type Category,
   type RequestStatus,
 } from "@ks/core";
-import { isFinal, loadFor, loadRequest, masterInfo, mustBe, num, REQUEST_SELECT, type Actor, type RequestRow } from "./access";
-import type { User } from "./auth";
+import { isFinal, loadFor, loadRequest, masterInfo, mustBe, num, REQUEST_SELECT, type Actor, type RequestRow, type Viewer } from "./access";
+import { linkLead, type SessionUser, type User } from "./auth";
 import type { Db, Queryable } from "./db";
 import { loadContract } from "./contracts";
 import { approvedEstimate, clientEstimate, createDraftEstimate, loadEstimates } from "./estimates";
@@ -71,6 +73,7 @@ function ownerItem(r: RequestRow) {
     leadType: r.lead_type,
     client: { id: r.client_id, name: r.client_name, phone: r.client_phone },
     master: r.master_id ? { id: r.master_id, name: r.master_name ?? "", phone: r.master_phone ?? "" } : null,
+    foreman: r.foreman_id ? { id: r.foreman_id, name: r.foreman_name ?? "" } : null,
     priceWork: num(r.price_work),
     priceGoods: num(r.price_goods),
     prepaid: r.prepaid_at !== null,
@@ -81,14 +84,48 @@ function ownerItem(r: RequestRow) {
   };
 }
 
+/** «Азиз Рахимов» → «Азиз Р.»: клиенту — имя и первая буква фамилии. */
+export function shortName(name: string): string {
+  const [first = "", ...rest] = name.trim().split(/\s+/);
+  const last = rest.at(-1);
+  return last ? `${first} ${last[0]!.toUpperCase()}.` : first;
+}
+
+/** Что делает мастер — клиент видит с момента, когда мастер подтвердил заказ: до этого мастер может смениться. */
+const MASTER_STATE: Partial<Record<RequestStatus, "accepted" | "en_route" | "on_site" | "done">> = {
+  accepted: "accepted",
+  en_route: "en_route",
+  on_site: "on_site",
+  done: "done",
+  act_signed: "done",
+  paid: "done",
+  closed: "done",
+};
+
+/**
+ * Кто работает по заявке — для клиента (docs/TZ.md, 16.4): прораб заказа с телефоном и мастера без телефонов —
+ * связь с клиентом идёт через прораба. Бригада из нескольких мастеров с ролями — этап L.
+ */
+function clientTeam(r: RequestRow) {
+  const state = MASTER_STATE[r.status];
+  return {
+    foreman: r.foreman_id ? { name: r.foreman_name ?? "", phone: r.foreman_phone ?? "" } : null,
+    team:
+      r.master_id && state
+        ? [{ name: shortName(r.master_name ?? ""), role: r.master_is_lead ? "Бригадир" : "Мастер", area: CATEGORY_LABELS[r.category as Category] ?? "", state }]
+        : [],
+  };
+}
+
 /** Строка списка для клиента: его суммы и имя мастера. */
 function clientItem(r: RequestRow) {
+  const state = MASTER_STATE[r.status];
   return {
     ...base(r),
     ...address(r),
     priceWork: num(r.price_work),
     priceGoods: num(r.price_goods),
-    master: r.master_id ? { name: r.master_name ?? "" } : null,
+    master: r.master_id && state ? { name: shortName(r.master_name ?? "") } : null,
     cancelReason: r.cancel_reason,
     warrantyUntil: r.warranty_until,
     rating: r.rating,
@@ -233,7 +270,7 @@ export class RequestService {
     wantedSlot?: string;
     utm?: Record<string, string>;
     calc?: { id: string; answers: Record<string, string | number | boolean> };
-  }) {
+  }, session: SessionUser | null = null) {
     const phone = normalizePhone(input.phone);
     if (!phone) throw new ApiError(400, "bad_phone", "Введите мобильный номер, например +7 999 123-45-67");
     return this.db.tx(async (q) => {
@@ -308,12 +345,15 @@ export class RequestService {
           createdBy: null,
         });
       }
+      // «Мои заказы» появляются сразу: браузер получает ключ к этой заявке без кода (docs/TZ.md, 16.4)
+      const access = await linkLead(q, id, clientId, session);
       // К подробной заявке клиент прикладывает фото сразу после отправки — без входа, по подписи на 1 час
       return {
         number: formatRequestNumber(number),
         total: qt ? qt.totals.total : null,
         id,
         upload: leadType === "full" ? this.files.token(leadUploadKey(id)) : null,
+        access,
       };
     });
   }
@@ -338,8 +378,11 @@ export class RequestService {
 
   // ---------- списки ----------
 
-  /** Владелец — все с фильтрами; бригадир — задания команды; мастер — свои задания; клиент — свои заявки. */
-  async list(user: User, f: ListFilter = {}) {
+  /**
+   * Владелец — все с фильтрами; бригадир — задания команды; мастер — свои задания; клиент — свои заявки и заявки,
+   * отправленные с этого браузера. Ключ без кода — только заявки с этого браузера.
+   */
+  async list(user: Viewer, f: ListFilter = {}) {
     const params: unknown[] = [];
     const where: string[] = [];
     const add = (sql: string, ...values: unknown[]) => {
@@ -354,7 +397,10 @@ export class RequestService {
       add(`r.master_id = ANY($1::text[])`, mi.team);
     } else {
       as = "client";
-      add(`r.client_id = $1`, user.id);
+      const fromBrowser = `r.id IN (SELECT request_id FROM session_requests WHERE session_id = $1)`;
+      if (user.scope === "device") add(fromBrowser, user.sessionId);
+      else if (user.sessionId) add(`(r.client_id = $1 OR ${fromBrowser.replace("$1", "$2")})`, user.id, user.sessionId);
+      else add(`r.client_id = $1`, user.id);
     }
     if (f.status?.length) add(`r.status = ANY($1::text[])`, f.status);
     if (as === "owner") {
@@ -393,7 +439,7 @@ export class RequestService {
 
   // ---------- карточка ----------
 
-  async get(user: User, id: string) {
+  async get(user: Viewer, id: string) {
     return this.detail(this.db, user, id);
   }
 
@@ -429,8 +475,8 @@ export class RequestService {
     return rows.map((e) => ({ at: e.at, text: e.payload.text, files: (e.payload.fileIds ?? []).map((f) => ({ id: f, url: this.files.url(f) })) }));
   }
 
-  private async detail(q: Queryable, user: User, id: string) {
-    const { r, as } = await loadFor(q, user, id);
+  private async detail(q: Queryable, user: Viewer, id: string) {
+    const { r, as } = await loadFor(q, user, id, { view: true });
     if (as === "owner") {
       const [estimates, invoices, files, acts, payouts, settings] = [
         await loadEstimates(q, id),
@@ -470,13 +516,20 @@ export class RequestService {
         events,
       };
     }
-    if (as === "client") {
+    if (as === "client" || as === "viewer") {
       const showResult = RESULT_VISIBLE.includes(r.status);
+      const contract = await loadContract(q, id);
       return {
         ...clientItem(r),
+        ...clientTeam(r),
+        /** Номер из заявки — чтобы подтвердить его кодом, не вводя заново. */
+        phone: r.client_phone,
+        /** Согласовать смету, принять работу — только владелец номера после кода. viewer только смотрит. */
+        canAct: as === "client",
         review: r.review,
         calc: r.calc,
-        contract: await loadContract(q, id),
+        // Без кода — только факт договора: в документе имя и телефон владельца номера
+        contract: contract && as === "viewer" ? { number: contract.number, method: contract.method, acceptedAt: contract.acceptedAt } : contract,
         estimates: (await loadEstimates(q, id)).filter((e) => e.status !== "draft").map(clientEstimate),
         invoices: clientInvoices(await loadInvoices(q, id)),
         files: await this.fileViews(q, id, showResult ? ["client_photo", "before", "after", "act_paper"] : ["client_photo"]),
@@ -529,7 +582,7 @@ export class RequestService {
   async setStatus(user: User, id: string, to: RequestStatus, reason: string) {
     await this.db.tx(async (q) => {
       const { r, as } = await loadFor(q, user, id);
-      if (as === "lead" || !canTransition(r.status, to, as)) throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
+      if (as === "lead" || as === "viewer" || !canTransition(r.status, to, as)) throw new ApiError(409, "bad_transition", "Это действие сейчас недоступно");
       const by: By = { userId: user.id, role: as };
       if (to === "cancelled") {
         if (!reason.trim()) throw new ApiError(400, "reason_required", "Укажите причину отмены");
@@ -739,6 +792,7 @@ export class RequestService {
         master: ["before", "after", "extra_work", "act_paper"],
         owner: ["client_photo", "before", "after", "extra_work", "act_paper"],
         lead: [],
+        viewer: [],
       };
       if (!allowed[as].includes(kind)) throw new ApiError(403, "forbidden", "Этот вид фото вам недоступен");
       if (isFinal(r)) throw new ApiError(409, "final", "Заявка уже закрыта");

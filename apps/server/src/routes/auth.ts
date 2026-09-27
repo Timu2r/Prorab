@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app";
 import { upsertProfile } from "../clients";
-import { body, need } from "../http";
+import { body, need, session } from "../http";
 import { schemas } from "../schemas";
 
 /** Вход и профиль (docs/TZ.md, 8.1). */
@@ -11,10 +11,11 @@ export function authRoutes(app: FastifyInstance, s: Services) {
   app.post("/auth/code", async (req) => s.auth.requestCode(body(schemas.code, req).phone, req.ip));
   app.post("/auth/verify", async (req) => {
     const b = body(schemas.verify, req);
-    return s.auth.verify(b.phone, b.code, b.device);
+    // Браузер с ключом заявки: заявки с него переходят во вход по коду
+    return s.auth.verify(b.phone, b.code, b.device, req.user?.scope === "device" ? req.user.sessionId : null);
   });
   app.post("/auth/logout", async (req) => {
-    await s.auth.logout(need(req).sessionId);
+    await s.auth.logout(session(req).sessionId);
     return { ok: true };
   });
 
@@ -37,7 +38,12 @@ export function authRoutes(app: FastifyInstance, s: Services) {
     };
   };
 
-  app.get("/me", async (req) => ({ user: await me(need(req).id) }));
+  app.get("/me", async (req) => {
+    const u = session(req);
+    // Ключ без кода: только номер из заявки — имя в базе могло быть записано владельцем номера, а не этим браузером
+    if (u.scope === "device") return { user: { id: u.id, phone: u.phone, name: "", roles: [], scope: u.scope } };
+    return { user: { ...(await me(u.id)), scope: u.scope } };
+  });
   app.patch("/me", async (req) => {
     const u = need(req);
     const { name, consent, ...profile } = body(schemas.me, req);

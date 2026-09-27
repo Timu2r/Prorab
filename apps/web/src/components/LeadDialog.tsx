@@ -21,8 +21,9 @@ import {
 } from "@ks/core";
 import { ArrowLeft, CircleAlert, CircleCheck, ImagePlus, Info, Minus, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api, ApiError, uploadImage } from "../api";
+import { useAuth } from "../auth";
 import "../calculator.css";
 import { DIRECTIONS } from "../directions";
 import { formatPhoneInput } from "../phone";
@@ -39,7 +40,9 @@ type Step = "consult" | "pick" | "questions" | "result" | "details" | "contacts"
 
 type Wishes = { when: "asap" | "date"; date: string; slot: Slot; address: string; apartment: string; floor: string; text: string };
 type Photo = { file: File; url: string };
-type Sent = { number: string | null; total: number | null; photos: number; failed: number; way: "consult" | "full" };
+/** access — ключ браузера из ответа на заявку: с ним «Мои заказы» появляются без входа (docs/TZ.md, 16.4). */
+type Sent = { id: string | null; number: string | null; total: number | null; photos: number; failed: number; way: "consult" | "full"; access: string | null };
+type LeadResponse = { id?: string; number: string | null; total?: number | null; upload?: { exp: number; sig: string } | null; access?: string | null };
 
 const MAX_PHOTOS = 5;
 
@@ -67,6 +70,7 @@ export function LeadDialog({ start, onClose }: { start: LeadStart; onClose: () =
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [sent, setSent] = useState<Sent | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
+  const { adopt } = useAuth();
 
   const calc = calcId ? CALCULATORS[calcId] : null;
   const answers = useMemo(() => (calc ? normalizeAnswers(calc, raw) : {}), [calc, raw]);
@@ -102,6 +106,8 @@ export function LeadDialog({ start, onClose }: { start: LeadStart; onClose: () =
   }, [step]);
 
   const finish = (r: Sent) => {
+    // Браузер без ключа получил новый — в шапке сразу появляется «Мои заказы»
+    if (r.access) void adopt(r.access);
     setSent(r);
     setStep("done");
   };
@@ -207,8 +213,8 @@ function Consult({ start, onSent }: { start?: Category; onSent: (r: Sent) => voi
       }
       button="Жду звонка"
       submit={async (c) => {
-        const r = await api<{ number: string | null }>("POST", "/public/leads", { ...c, type: "consult", category: category || "general", comment, consent: true });
-        onSent({ number: r.number, total: null, photos: 0, failed: 0, way: "consult" });
+        const r = await api<LeadResponse>("POST", "/public/leads", { ...c, type: "consult", category: category || "general", comment, consent: true });
+        onSent({ id: r.id ?? null, number: r.number, total: null, photos: 0, failed: 0, way: "consult", access: r.access ?? null });
       }}
     />
   );
@@ -693,7 +699,7 @@ function FullContacts({
       extra={progress ? <p className="calc-small">{progress}</p> : undefined}
       button="Отправить заявку"
       submit={async (c) => {
-        const r = await api<{ number: string; total: number | null; id: string; upload: { exp: number; sig: string } | null }>("POST", "/public/leads", {
+        const r = await api<LeadResponse>("POST", "/public/leads", {
           ...c,
           type: "full",
           category: calcId,
@@ -709,7 +715,7 @@ function FullContacts({
         let ok = 0;
         let failed = 0;
         for (const [i, p] of photos.entries()) {
-          if (!r.upload) break;
+          if (!r.upload || !r.id) break;
           setProgress(`Загружаем фото ${i + 1} из ${photos.length}…`);
           try {
             await uploadImage(`/public/leads/${r.id}/photos?exp=${r.upload.exp}&sig=${encodeURIComponent(r.upload.sig)}`, await shrink(p.file));
@@ -718,7 +724,7 @@ function FullContacts({
             failed++;
           }
         }
-        onSent({ number: r.number, total: r.total, photos: ok, failed, way: "full" });
+        onSent({ id: r.id ?? null, number: r.number, total: r.total ?? null, photos: ok, failed, way: "full", access: r.access ?? null });
       }}
     />
   );
@@ -728,6 +734,8 @@ function FullContacts({
 
 function Done({ sent, onClose }: { sent: Sent; onClose: () => void }) {
   const full = sent.way === "full";
+  const navigate = useNavigate();
+  const { loading } = useAuth();
   return (
     <>
       <div className="calc-body calc-done">
@@ -747,8 +755,8 @@ function Done({ sent, onClose }: { sent: Sent; onClose: () => void }) {
             <span>{full ? "В рабочее время, с 9 до 21. Уточним детали и назовём точную цену." : `В рабочее время, с 9 до 21. Заявка ${sent.number}.`}</span>
           </li>
           <li>
-            <b>Смета и договор — в личном кабинете</b>
-            <span>Согласуете в один клик: вход по номеру телефона и коду.</span>
+            <b>Ход заказа — в «Мои заказы»</b>
+            <span>Кнопка уже появилась вверху сайта, входить не нужно. Смету согласуете по коду из звонка — это ваша подпись.</span>
           </li>
           <li>
             <b>Мастер приедет в согласованное время</b>
@@ -756,10 +764,28 @@ function Done({ sent, onClose }: { sent: Sent; onClose: () => void }) {
           </li>
         </ol>
       </div>
-      <footer className="calc-foot">
-        <button className="btn btn-primary btn-block" onClick={onClose}>
-          Готово
-        </button>
+      <footer className="calc-foot calc-foot-stack">
+        {sent.id ? (
+          <>
+            <button
+              className="btn btn-primary"
+              disabled={loading}
+              onClick={() => {
+                onClose();
+                navigate(`/cabinet/z/${sent.id}`);
+              }}
+            >
+              Открыть заказ
+            </button>
+            <button className="btn btn-outline" onClick={onClose}>
+              Закрыть
+            </button>
+          </>
+        ) : (
+          <button className="btn btn-primary btn-block" onClick={onClose}>
+            Готово
+          </button>
+        )}
       </footer>
     </>
   );

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app";
-import { body, image, need, param, query } from "../http";
+import { body, image, need, param, query, session } from "../http";
 import { schemas } from "../schemas";
 
 /** Заявки: создание, списки, карточка, статусы, мастер, приёмка, фото (docs/TZ.md, 8.3). Права — в RequestService. */
@@ -8,9 +8,10 @@ export function requestRoutes(app: FastifyInstance, s: Services) {
   const id = (req: Parameters<typeof param>[0]) => param(req, "id");
 
   app.post("/requests", async (req, reply) => reply.status(201).send({ request: await s.requests.create(need(req), body(schemas.newRequest, req)) }));
-  app.get("/requests", async (req) => ({ requests: await s.requests.list(need(req), query(schemas.listRequests, req)) }));
+  // Список и карточка открываются и ключом браузера без кода — только заявки, отправленные с него (docs/TZ.md, 16.4)
+  app.get("/requests", async (req) => ({ requests: await s.requests.list(session(req), query(schemas.listRequests, req)) }));
   app.get("/requests/mine", async (req) => ({ requests: await s.requests.listAsClient(need(req)) }));
-  app.get("/requests/:id", async (req) => ({ request: await s.requests.get(need(req), id(req)) }));
+  app.get("/requests/:id", async (req) => ({ request: await s.requests.get(session(req), id(req)) }));
   app.patch("/requests/:id", async (req) => ({ request: await s.requests.update(need(req), id(req), body(schemas.patchRequest, req)) }));
 
   app.post("/requests/:id/status", async (req) => {

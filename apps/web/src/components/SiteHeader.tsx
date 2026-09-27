@@ -1,8 +1,8 @@
 import { BRAND, LOGO_WORD } from "@ks/core";
-import { Menu, Phone, X } from "lucide-react";
+import { ClipboardList, Menu, Phone, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
-import { useAuth } from "../auth";
+import { isStaff, useAuth } from "../auth";
 
 /** Трафаретная надпись ПРОРАБ, под ней подпись ровно по ширине слова. Контуры — packages/core/src/logo.ts. */
 export function Logo() {
@@ -31,6 +31,8 @@ const NAV = [
 export function SiteHeader() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
+  // После заявки у клиента появляется своя кнопка «Мои заказы» — и без входа по коду (docs/TZ.md, 16.4)
+  const orders = !!user && !isStaff(user);
 
   return (
     <header className="site-header">
@@ -43,21 +45,33 @@ export function SiteHeader() {
             </a>
           ))}
         </nav>
-        <div className="bar-right">
+        <div className={`bar-right${orders ? " has-orders" : ""}`}>
           {BRAND.phone && (
             <a className="bar-phone" href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`}>
               {BRAND.phone}
             </a>
           )}
-          <Link className="bar-login" to={user ? "/cabinet" : "/login"}>
-            {user ? "Кабинет" : "Войти"}
-          </Link>
+          {orders ? (
+            <Link className="orders-link" to="/cabinet">
+              <ClipboardList size={18} />
+              Мои заказы
+            </Link>
+          ) : (
+            <Link className="bar-login" to={user ? "/cabinet" : "/login"}>
+              {user ? "Кабинет" : "Войти"}
+            </Link>
+          )}
           <a className="btn btn-primary btn-sm" href="/#zayavka">
             <span className="only-lg">Оставить заявку</span>
             <span className="only-sm">Заявка</span>
           </a>
+          {orders && (
+            <Link className="menu-btn orders-icon" to="/cabinet" aria-label="Мои заказы" title="Мои заказы">
+              <ClipboardList size={19} />
+            </Link>
+          )}
           {BRAND.phone && (
-            <a className="menu-btn" href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`} aria-label={`Позвонить ${BRAND.phone}`}>
+            <a className="menu-btn bar-call" href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`} aria-label={`Позвонить ${BRAND.phone}`}>
               <Phone size={19} />
             </a>
           )}
@@ -73,7 +87,8 @@ export function SiteHeader() {
               {n.label}
             </a>
           ))}
-          <Link to={user ? "/cabinet" : "/login"}>{user ? "Кабинет" : "Войти"}</Link>
+          <Link to={user ? "/cabinet" : "/login"}>{orders ? "Мои заказы" : user ? "Кабинет" : "Войти"}</Link>
+          {BRAND.phone && <a href={`tel:${BRAND.phone.replace(/[^\d+]/g, "")}`}>Позвонить: {BRAND.phone}</a>}
         </nav>
       )}
     </header>

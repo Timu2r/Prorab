@@ -22,6 +22,8 @@ export type OwnerRequestItem = Base & {
   leadType: LeadType | null;
   client: { id: string; name: string; phone: string };
   master: { id: string; name: string; phone: string } | null;
+  /** Прораб заказа — кто ведёт заказ; клиент видит его имя и телефон в «Мои заказы» на сайте. */
+  foreman: { id: string; name: string } | null;
   priceWork: number | null;
   priceGoods: number | null;
   refundRequired: boolean;

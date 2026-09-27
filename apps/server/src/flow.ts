@@ -22,6 +22,9 @@ export async function logEvent(q: Queryable, requestId: string, by: By, kind: st
     kind,
     JSON.stringify(payload),
   ]);
+  // Прораб заказа — кто из владельцев первым взялся за заявку (docs/TZ.md, 16.6). Клиент видит его имя и телефон.
+  if (by.role === "owner" && by.userId)
+    await q.query(`UPDATE requests SET foreman_id = $1 WHERE id = $2 AND foreman_id IS NULL`, [by.userId, requestId]);
 }
 
 /** Меняет статус и ставит отметку времени шага. Проверки делает вызывающий код. */

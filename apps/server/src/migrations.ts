@@ -375,6 +375,26 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
     id: 8,
     sql: () => `ALTER TABLE requests ADD COLUMN lead_type text CHECK (lead_type IN ('consult', 'full'));`,
   },
+  {
+    // Кабинет клиента появляется сам после заявки (docs/TZ.md, 16.4): браузер получает ключ без кода, который
+    // открывает только заявки, отправленные с него. Прораб заказа — кто ведёт заказ от компании (16.6):
+    // ставится первым действием владельца, для старых заявок — по истории.
+    id: 9,
+    sql: () => `
+      ALTER TABLE sessions ADD COLUMN scope text NOT NULL DEFAULT 'full' CHECK (scope IN ('full', 'device'));
+      CREATE TABLE session_requests (
+        session_id  text NOT NULL REFERENCES sessions(id),
+        request_id  text NOT NULL REFERENCES requests(id),
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (session_id, request_id)
+      );
+      ALTER TABLE requests ADD COLUMN foreman_id text REFERENCES users(id);
+      UPDATE requests r SET foreman_id = (
+        SELECT e.actor_id FROM request_events e
+        WHERE e.request_id = r.id AND e.actor_role = 'owner' AND e.actor_id IS NOT NULL
+        ORDER BY e.at LIMIT 1
+      ) WHERE foreman_id IS NULL;`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

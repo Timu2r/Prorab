@@ -1,10 +1,16 @@
 import type { RequestStatus } from "@ks/core";
-import type { User } from "./auth";
+import type { SessionScope, User } from "./auth";
 import type { Queryable } from "./db";
 import { ApiError } from "./util";
 
-/** В какой роли человек действует с конкретной заявкой. lead — бригадир по заданию своего мастера. */
-export type Actor = "owner" | "lead" | "master" | "client";
+/**
+ * В какой роли человек действует с конкретной заявкой. lead — бригадир по заданию своего мастера. viewer — только
+ * смотрит заявку, отправленную с его браузера: ключ без кода или чужой номер в заявке (docs/TZ.md, 16.4).
+ */
+export type Actor = "owner" | "lead" | "master" | "client" | "viewer";
+
+/** Кто смотрит: пользователь и его ключ. По ключу видны заявки, отправленные с этого браузера. */
+export type Viewer = User & { sessionId?: string; scope?: SessionScope };
 
 export type RequestRow = {
   id: string;
@@ -46,18 +52,26 @@ export type RequestRow = {
   review: string;
   created_at: Date;
   updated_at: Date;
+  /** Прораб заказа — кто ведёт заказ от компании и отвечает клиенту (docs/TZ.md, 16.6). */
+  foreman_id: string | null;
   client_name: string;
   client_phone: string;
   master_name: string | null;
   master_phone: string | null;
+  master_is_lead: boolean | null;
+  foreman_name: string | null;
+  foreman_phone: string | null;
 };
 
 export const REQUEST_SELECT = `
   SELECT r.*, to_char(r.wanted_date, 'YYYY-MM-DD') AS wanted_date, to_char(r.warranty_until, 'YYYY-MM-DD') AS warranty_until,
-         c.name AS client_name, c.phone AS client_phone, m.name AS master_name, m.phone AS master_phone
+         c.name AS client_name, c.phone AS client_phone, m.name AS master_name, m.phone AS master_phone,
+         mm.is_lead AS master_is_lead, f.name AS foreman_name, f.phone AS foreman_phone
   FROM requests r
   JOIN users c ON c.id = r.client_id
   LEFT JOIN users m ON m.id = r.master_id
+  LEFT JOIN masters mm ON mm.user_id = r.master_id
+  LEFT JOIN users f ON f.id = r.foreman_id
   WHERE r.deleted_at IS NULL`;
 
 /** Мастер и его команда. У обычного мастера команда — он сам. */
@@ -88,13 +102,24 @@ export async function loadRequest(q: Queryable, id: string): Promise<RequestRow>
   return r;
 }
 
-/** Заявка и роль, в которой человек с ней работает. Чужую заявку не отличаем от несуществующей. */
-export async function loadFor(q: Queryable, user: User, id: string): Promise<{ r: RequestRow; as: Actor; mi: MasterInfo | null }> {
+/**
+ * Заявка и роль, в которой человек с ней работает. Чужую заявку не отличаем от несуществующей.
+ * view — путь только для чтения: тогда заявка, отправленная с этого браузера, открывается как viewer. Ключ без кода
+ * (scope device) ничего, кроме такого просмотра, не получает — даже свою заявку.
+ */
+export async function loadFor(q: Queryable, user: Viewer, id: string, opts: { view?: boolean } = {}): Promise<{ r: RequestRow; as: Actor; mi: MasterInfo | null }> {
   const r = await loadRequest(q, id);
   const mi = await masterInfo(q, user);
-  const as = actorFor(user, r, mi);
+  let as = user.scope === "device" ? null : actorFor(user, r, mi);
+  if (!as && opts.view && user.sessionId && (await linked(q, user.sessionId, id))) as = "viewer";
   if (!as) throw new ApiError(404, "not_found", "Заявка не найдена");
   return { r, as, mi };
+}
+
+/** Заявка отправлена с браузера с этим ключом (или перешла к нему при входе по коду). */
+async function linked(q: Queryable, sessionId: string, requestId: string): Promise<boolean> {
+  const [row] = await q.query(`SELECT 1 FROM session_requests WHERE session_id = $1 AND request_id = $2`, [sessionId, requestId]);
+  return !!row;
 }
 
 export function mustBe(as: Actor, ...allowed: Actor[]): void {

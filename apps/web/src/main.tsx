@@ -10,12 +10,16 @@ import { PrivacyPage } from "./pages/Privacy";
 import { RequestPage } from "./pages/RequestPage";
 import "./styles.css";
 
-/** Без входа — на страницу входа, а после входа обратно: клиент приходит по ссылке на смету из WhatsApp. */
-function RequireAuth({ children }: { children: React.ReactNode }) {
+/**
+ * Без входа — на страницу входа, а после входа обратно: клиент приходит по ссылке на смету из WhatsApp.
+ * Ключа браузера после заявки хватает на «Мои заказы»; full — страница, где нужен код (договор с данными клиента).
+ */
+function RequireAuth({ children, full }: { children: React.ReactNode; full?: boolean }) {
   const { user, loading } = useAuth();
   const location = useLocation();
   if (loading) return <div className="page-center muted">Загрузка…</div>;
-  return user ? children : <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+  if (user && !(full && user.scope === "device")) return children;
+  return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
 }
 
 createRoot(document.getElementById("root")!).render(
@@ -38,7 +42,7 @@ createRoot(document.getElementById("root")!).render(
           <Route
             path="/cabinet/z/:id/dogovor"
             element={
-              <RequireAuth>
+              <RequireAuth full>
                 <ContractPage />
               </RequireAuth>
             }

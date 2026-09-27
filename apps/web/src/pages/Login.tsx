@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { api, ApiError, type User } from "../api";
 import { useAuth } from "../auth";
 import { formatPhoneInput } from "../phone";
@@ -13,7 +13,9 @@ export function LoginPage() {
   // Куда вернуться после входа: только страницы кабинета, чтобы ссылкой нельзя было увести на чужой сайт
   const [params] = useSearchParams();
   const next = params.get("next")?.startsWith("/cabinet") ? params.get("next")! : "/cabinet";
-  const [phone, setPhone] = useState("");
+  // Пришёл из «Мои заказы» без кода: номер из заявки уже известен — остаётся подтвердить его звонком
+  const device = user?.scope === "device";
+  const [phone, setPhone] = useState(() => (device ? formatPhoneInput(user.phone) : ""));
   const [sent, setSent] = useState<CodeResponse | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -26,7 +28,11 @@ export function LoginPage() {
     return () => clearTimeout(t);
   }, [wait]);
 
-  if (user) return <Navigate to={next} replace />;
+  useEffect(() => {
+    if (device && !phone) setPhone(formatPhoneInput(user.phone));
+  }, [device, user, phone]);
+
+  if (user && !device) return <Navigate to={next} replace />;
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -67,8 +73,15 @@ export function LoginPage() {
       <div className="page-center">
         {!sent ? (
           <form className="auth-card" onSubmit={requestCode}>
-            <h1>Вход</h1>
-            <p className="muted">Для клиентов, мастеров и владельца. Вам позвонят: последние 4 цифры входящего номера — код входа, отвечать не нужно.</p>
+            <h1>{device ? "Подтвердите номер" : "Вход"}</h1>
+            {device ? (
+              <p className="muted">
+                Код из звонка — ваша подпись: после него можно согласовать смету, открыть договор и увидеть все заявки по номеру, в том числе оформленные по
+                телефону. Вам позвонят: последние 4 цифры входящего номера — код, отвечать не нужно.
+              </p>
+            ) : (
+              <p className="muted">Для клиентов, мастеров и владельца. Вам позвонят: последние 4 цифры входящего номера — код входа, отвечать не нужно.</p>
+            )}
             <label className="field">
               <span>Мобильный телефон</span>
               <input
@@ -86,6 +99,11 @@ export function LoginPage() {
             <button className="btn btn-primary btn-block" disabled={busy || phone.replace(/\D/g, "").length < 11}>
               Получить код
             </button>
+            {device && (
+              <Link to={next} className="btn-link" style={{ justifySelf: "center" }}>
+                Вернуться к заказу
+              </Link>
+            )}
           </form>
         ) : (
           <div className="auth-card">
