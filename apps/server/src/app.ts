@@ -11,6 +11,7 @@ import { FileService, IMAGE_TYPES, MAX_FILE_BYTES } from "./files";
 import "./http";
 import { InvoiceService } from "./invoices";
 import { PayoutService } from "./payouts";
+import { PurchaseService } from "./purchases";
 import { RequestService } from "./requests";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -34,6 +35,7 @@ export type Services = {
   estimates: EstimateService;
   invoices: InvoiceService;
   payouts: PayoutService;
+  purchases: PurchaseService;
   files: FileService;
   catalog: CatalogService;
   masters: MasterService;
@@ -55,6 +57,7 @@ export async function buildApp(db: Db, sender: CodeSender, cfg: AppConfig) {
     estimates: new EstimateService(db),
     invoices: new InvoiceService(db),
     payouts,
+    purchases: new PurchaseService(db, files),
     files,
     catalog: new CatalogService(db),
     masters: new MasterService(db),

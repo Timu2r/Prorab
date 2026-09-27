@@ -3,6 +3,9 @@ import type { Role } from "@ks/core";
 const BASE = import.meta.env.VITE_API_URL ?? `http://${location.hostname}:4100`;
 const TOKEN_KEY = "ks_token";
 
+/** Полный адрес для относительных ссылок сервера — фото приходят как /files/…?exp&sig. */
+export const apiUrl = (path: string) => BASE + path;
+
 /** scope device — ключ браузера после заявки: без кода видны только заявки с этого браузера (docs/TZ.md, 16.4). */
 export type User = { id: string; phone: string; name: string; roles: Role[]; scope?: "full" | "device" };
 

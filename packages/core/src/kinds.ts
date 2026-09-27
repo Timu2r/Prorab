@@ -35,7 +35,7 @@ export const TAX_STATUS_LABELS: Record<TaxStatus, string> = {
   none: "Без статуса",
 };
 
-export const FILE_KINDS = ["client_photo", "before", "after", "extra_work", "act_paper", "npd_receipt"] as const;
+export const FILE_KINDS = ["client_photo", "before", "after", "extra_work", "act_paper", "npd_receipt", "receipt"] as const;
 export type FileKind = (typeof FILE_KINDS)[number];
 
 export const FILE_KIND_LABELS: Record<FileKind, string> = {
@@ -45,15 +45,36 @@ export const FILE_KIND_LABELS: Record<FileKind, string> = {
   extra_work: "Доп. работы",
   act_paper: "Бумажный акт",
   npd_receipt: "Чек самозанятого",
+  receipt: "Чек покупки",
 };
 
-export const PAYOUT_KINDS = ["work", "deduction", "bonus"] as const;
+/** expense — возмещение того, что мастер купил для заявки на свои деньги (подтверждает владелец). */
+export const PAYOUT_KINDS = ["work", "deduction", "bonus", "expense"] as const;
 export type PayoutKind = (typeof PAYOUT_KINDS)[number];
 
 export const PAYOUT_KIND_LABELS: Record<PayoutKind, string> = {
   work: "За заявку",
   deduction: "Удержание",
   bonus: "Доплата",
+  expense: "Возмещение покупок",
+};
+
+/**
+ * Покупки по ходу работ (решение владельца 2026-09-27: мастер просит купить или покупает сам).
+ * need — «нужно купить»: прораб покупает или разрешает мастеру; bought — мастер купил на свои, прораб подтверждает,
+ * и сумма начисляется мастеру как возмещение.
+ */
+export const PURCHASE_KINDS = ["need", "bought"] as const;
+export type PurchaseKind = (typeof PURCHASE_KINDS)[number];
+
+export const PURCHASE_STATUSES = ["open", "done", "approved", "rejected"] as const;
+export type PurchaseStatus = (typeof PURCHASE_STATUSES)[number];
+
+export const PURCHASE_STATUS_LABELS: Record<PurchaseStatus, string> = {
+  open: "Ждёт прораба",
+  done: "Куплено",
+  approved: "Возместим",
+  rejected: "Не возмещаем",
 };
 
 export const PAYOUT_STATUSES = ["accrued", "paid", "cancelled"] as const;

@@ -67,11 +67,10 @@ describe("смета", () => {
 });
 
 describe("счета и предоплата (правила 6, 7)", () => {
-  it("счёт на материалы: сумма из сметы, без ссылки не отправить, после отправки — «Счёт выставлен», после оплаты — «Предоплата получена»", async () => {
+  it("счёт на материалы: сумма из сметы, после отправки — «Счёт выставлен», после оплаты — «Предоплата получена»", async () => {
     const s = await scene(t, { materials: true });
     const inv = (await t.call("POST", `/requests/${s.id}/invoices`, s.owner, { kind: "materials" })).body.invoice;
     expect(inv).toMatchObject({ amount: 450_000, number: "Z-0001-1", status: "draft" });
-    expect((await t.call("POST", `/invoices/${inv.id}/send`, s.owner)).body.error.code).toBe("url_required");
     expect((await t.call("PATCH", `/invoices/${inv.id}`, s.owner, { paymentUrl: "ftp://x" })).status).toBe(400);
     await t.call("PATCH", `/invoices/${inv.id}`, s.owner, { paymentUrl: "https://pay.example/materials" });
     await t.call("POST", `/invoices/${inv.id}/send`, s.owner);
@@ -83,6 +82,16 @@ describe("счета и предоплата (правила 6, 7)", () => {
     await t.call("POST", `/invoices/${inv.id}/paid`, s.owner, { bankRef: "A-1" });
     expect(await status(t, s)).toBe("prepaid");
     expect((await t.call("POST", `/invoices/${inv.id}/paid`, s.owner)).body.error.code).toBe("not_sent");
+  });
+
+  it("счёт при встрече: без ссылки банка, клиент видит сумму, прораб отмечает оплату (docs/TZ.md, 16.5)", async () => {
+    const s = await scene(t, { materials: true });
+    const inv = (await t.call("POST", `/requests/${s.id}/invoices`, s.owner, { kind: "materials", amount: 300_000 })).body.invoice;
+    expect((await t.call("POST", `/invoices/${inv.id}/send`, s.owner)).status).toBe(200);
+    const c = (await t.call("GET", `/requests/${s.id}`, s.client)).body.request;
+    expect(c.invoices[0]).toMatchObject({ amount: 300_000, status: "sent", paymentUrl: "" });
+    expect((await t.call("POST", `/invoices/${inv.id}/paid`, s.owner)).status).toBe(200);
+    expect(await status(t, s)).toBe("prepaid");
   });
 
   it("мастер отказался после предоплаты — заявка возвращается в «Предоплата получена»", async () => {

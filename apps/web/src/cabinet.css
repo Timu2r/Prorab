@@ -437,6 +437,30 @@
   }
 }
 
+/* Фото работ */
+.photo-group + .photo-group {
+  margin-top: 16px;
+}
+.photo-group h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.photo-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  display: block;
+}
+
 /* Правила для клиента */
 .rules h2 {
   display: flex;

@@ -30,6 +30,9 @@ export type RequestRow = {
   wanted_slot: string;
   visit_at: Date | null;
   visit_until: Date | null;
+  /** Выезд прораба на объект до договора: осмотр, замер, договор и аванс (docs/TZ.md, 16.9). */
+  survey_at: Date | null;
+  survey_until: Date | null;
   source: string;
   utm: Record<string, string> | null;
   /** Заявка с сайта: консультация или подробная. null — заведена владельцем или клиентом в приложении. */

@@ -67,6 +67,16 @@ export class DashboardService {
     for (const r of await q(`SELECT id, number, updated_at AS since FROM requests WHERE refund_required AND deleted_at IS NULL`))
       push("refund_required", "Нужен возврат денег клиенту", r);
 
+    // Покупки мастера ждут прораба сразу, без порога: мастер стоит на объекте
+    for (const r of await q<{ kind: string; text: string }>(
+      `SELECT r.id, r.number, p.created_at AS since, p.kind, p.text FROM purchases p JOIN requests r ON r.id = p.request_id WHERE p.status = 'open'`,
+    ))
+      push(
+        r.kind === "need" ? "purchase_need" : "purchase_bought",
+        r.kind === "need" ? `Мастер просит купить: ${r.text}` : `Мастер купил сам: ${r.text} — подтвердите возмещение`,
+        r,
+      );
+
     const payouts = await this.db.query<{ payout_id: string; id: string | null; number: number | null; since: Date; needs_amount: boolean; status: string }>(
       `SELECT p.id AS payout_id, r.id, r.number, p.accrued_at AS since, p.needs_amount, p.status
        FROM payouts p LEFT JOIN requests r ON r.id = p.request_id WHERE p.status = 'accrued'`,
@@ -88,26 +98,36 @@ export class DashboardService {
     return out.sort((x, y) => new Date(x.since).getTime() - new Date(y.since).getTime());
   }
 
-  /** Визиты на сегодня по Москве. */
+  /** Сегодня по Москве: визиты мастеров и выезды прораба на объект (docs/TZ.md, 16.9), по времени. */
   private async today() {
     const start = moscowDayStart();
     const end = new Date(start.getTime() + DAY);
-    const rows = await this.db.query<{ id: string; number: number; status: RequestStatus; category: string; district: string; visit_at: Date; visit_until: Date | null; master_name: string | null }>(
-      `SELECT r.id, r.number, r.status, r.category, r.district, r.visit_at, r.visit_until, m.name AS master_name
+    type Row = { id: string; number: number; status: RequestStatus; category: string; district: string; at: Date; until: Date | null; who: string | null };
+    const visits = await this.db.query<Row>(
+      `SELECT r.id, r.number, r.status, r.category, r.district, r.visit_at AS at, r.visit_until AS until, m.name AS who
        FROM requests r LEFT JOIN users m ON m.id = r.master_id
-       WHERE r.visit_at >= $1 AND r.visit_at < $2 AND r.status <> 'cancelled' AND r.deleted_at IS NULL ORDER BY r.visit_at`,
+       WHERE r.visit_at >= $1 AND r.visit_at < $2 AND r.status <> 'cancelled' AND r.deleted_at IS NULL`,
       [start, end],
     );
-    return rows.map((r) => ({
+    const surveys = await this.db.query<Row>(
+      `SELECT r.id, r.number, r.status, r.category, r.district, r.survey_at AS at, r.survey_until AS until, f.name AS who
+       FROM requests r LEFT JOIN users f ON f.id = r.foreman_id
+       WHERE r.survey_at >= $1 AND r.survey_at < $2 AND r.status NOT IN ('cancelled', 'closed') AND r.deleted_at IS NULL`,
+      [start, end],
+    );
+    const item = (kind: "visit" | "survey") => (r: Row) => ({
+      kind,
       id: r.id,
       number: formatRequestNumber(r.number),
       status: r.status,
       category: r.category,
       district: r.district,
-      visitAt: r.visit_at,
-      visitUntil: r.visit_until,
-      master: r.master_name,
-    }));
+      visitAt: r.at,
+      visitUntil: r.until,
+      /** Визит — мастер; выезд — прораб заказа. */
+      master: r.who,
+    });
+    return [...visits.map(item("visit")), ...surveys.map(item("survey"))].sort((a, b) => new Date(a.visitAt).getTime() - new Date(b.visitAt).getTime());
   }
 
   /** Итоги месяца: поток денег и результат по закрытым заявкам. */

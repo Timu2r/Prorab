@@ -26,6 +26,7 @@ import { logEvent, moveStatus, syncStatus, type By } from "./flow";
 import { clientInvoices, loadInvoices } from "./invoices";
 import { accruePayout, payForecast, type PayoutService } from "./payouts";
 import { loadPriceItems } from "./pricing";
+import { loadPurchases } from "./purchases";
 import type { SettingsService } from "./settings";
 import { addMonths, moscowDate } from "./time";
 import { ApiError, newId } from "./util";
@@ -58,6 +59,8 @@ function base(r: RequestRow) {
     wantedSlot: r.wanted_slot,
     visitAt: r.visit_at,
     visitUntil: r.visit_until,
+    surveyAt: r.survey_at,
+    surveyUntil: r.survey_until,
     createdAt: r.created_at,
   };
 }
@@ -177,6 +180,8 @@ export type RequestPatch = Partial<{
   wantedSlot: string;
   visitAt: string | null;
   visitUntil: string | null;
+  surveyAt: string | null;
+  surveyUntil: string | null;
   serviceIds: string[];
   ownerNote: string;
 }>;
@@ -194,6 +199,8 @@ const PATCH_COLUMNS: Record<string, string> = {
   wantedSlot: "wanted_slot",
   visitAt: "visit_at",
   visitUntil: "visit_until",
+  surveyAt: "survey_at",
+  surveyUntil: "survey_until",
   serviceIds: "service_ids",
   ownerNote: "owner_note",
 };
@@ -510,6 +517,7 @@ export class RequestService {
         files,
         acts,
         extraWork: await this.extraWork(q, id),
+        purchases: await loadPurchases(q, this.files, id),
         payouts,
         payForecast: forecast,
         money: requestResult({ revenue, goodsCost: approved?.totals.cost ?? 0, payouts: paid }, settings.taxPercent),
@@ -545,6 +553,7 @@ export class RequestService {
       materials: (est?.items ?? []).filter((i) => i.kind !== "work").map((i) => ({ id: i.id, name: i.name, unit: i.unit, qty: i.qty, usedQty: i.usedQty })),
       files: await this.fileViews(q, id),
       extraWork: await this.extraWork(q, id),
+      purchases: (await loadPurchases(q, this.files, id)).filter((p) => p.master.id === user.id),
       acts: await this.acts(q, id),
       role: as,
     };
@@ -562,6 +571,9 @@ export class RequestService {
       const visitAt = patch.visitAt !== undefined ? patch.visitAt : r.visit_at;
       const visitUntil = patch.visitUntil !== undefined ? patch.visitUntil : r.visit_until;
       if (visitAt && visitUntil && new Date(visitUntil) <= new Date(visitAt)) throw new ApiError(400, "bad_visit", "Окончание визита раньше начала");
+      const surveyAt = patch.surveyAt !== undefined ? patch.surveyAt : r.survey_at;
+      const surveyUntil = patch.surveyUntil !== undefined ? patch.surveyUntil : r.survey_until;
+      if (surveyAt && surveyUntil && new Date(surveyUntil) <= new Date(surveyAt)) throw new ApiError(400, "bad_visit", "Окончание выезда раньше начала");
       const sets: string[] = [];
       const params: unknown[] = [];
       for (const [k, v] of Object.entries(patch)) {
@@ -789,8 +801,8 @@ export class RequestService {
       const { r, as } = await loadFor(q, user, id);
       const allowed: Record<Actor, string[]> = {
         client: ["client_photo"],
-        master: ["before", "after", "extra_work", "act_paper"],
-        owner: ["client_photo", "before", "after", "extra_work", "act_paper"],
+        master: ["before", "after", "extra_work", "act_paper", "receipt"],
+        owner: ["client_photo", "before", "after", "extra_work", "act_paper", "receipt"],
         lead: [],
         viewer: [],
       };

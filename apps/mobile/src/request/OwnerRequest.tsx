@@ -22,9 +22,13 @@ import { Button, Card, ErrorBox, Loading, Pill, Screen, Section, statusTone } fr
 import { useApi } from "../useApi";
 import { AssignPanel } from "./AssignPanel";
 import { EstimateBlock } from "./EstimateBlock";
+import { AcceptanceBlock, CloseBlock, InvoicesBlock, PayoutsBlock, WorkReport } from "./OwnerFinish";
 import { VisitPicker } from "./VisitPicker";
 
-/** Карточка заявки владельца (docs/KALKULYATOR.md, раздел 5): звонок → смета → договор → визит → мастер. */
+/**
+ * Карточка заявки владельца по его порядку работы (docs/TZ.md, 16.9): звонок → выезд на объект → смета → договор
+ * и аванс лично → визит и мастер → работа, покупки → приёмка → расчёт → закрытие и выплата.
+ */
 export function OwnerRequest({ id }: { id: string }) {
   const t = useTheme();
   const { data, error, loading, refreshing, reload } = useApi<{ request: OwnerRequestDetail }>(`/requests/${id}`);
@@ -54,16 +58,27 @@ export function OwnerRequest({ id }: { id: string }) {
               </Card>
             </Section>
           ) : null}
+          {SURVEY_STATUSES.includes(r.status) || r.surveyAt ? (
+            <VisitPicker kind="survey" requestId={r.id} visitAt={r.surveyAt} visitUntil={r.surveyUntil} onChanged={reload} />
+          ) : null}
           <EstimateBlock requestId={r.id} number={r.number} status={r.status} client={r.client} estimates={r.estimates} onChanged={reload} />
           <ContractCard requestId={r.id} contract={r.contract} />
+          <InvoicesBlock r={r} onChanged={reload} />
           <VisitPicker requestId={r.id} visitAt={r.visitAt} visitUntil={r.visitUntil} onChanged={reload} />
           <AssignPanel requestId={r.id} category={r.category} status={r.status} master={r.master} onChanged={reload} />
+          <WorkReport r={r} onChanged={reload} />
+          <AcceptanceBlock r={r} onChanged={reload} />
+          <CloseBlock r={r} onChanged={reload} />
+          <PayoutsBlock r={r} onChanged={reload} />
           <History events={r.events} />
         </>
       ) : null}
     </Screen>
   );
 }
+
+/** Выезд на объект планируют до договора; после — только если время уже назначено. */
+const SURVEY_STATUSES: RequestStatus[] = ["new", "agreed", "invoiced", "prepaid"];
 
 function ClientCard({ r }: { r: OwnerRequestDetail }) {
   const t = useTheme();
@@ -230,6 +245,8 @@ const EVENT_LABELS: Record<string, string> = {
   act_signed: "Акт подписан",
   act_remarks: "Замечания к работе",
   payout_accrued: "Начислена выплата мастеру",
+  purchase_added: "Мастер: покупка по ходу работ",
+  purchase_resolved: "Решение по покупке мастера",
 };
 
 function History({ events }: { events: RequestEvent[] }) {

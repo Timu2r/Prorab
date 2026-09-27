@@ -37,6 +37,12 @@ export function requestRoutes(app: FastifyInstance, s: Services) {
     return { request: await s.requests.review(need(req), id(req), b.rating, b.text) };
   });
 
+  // Покупки мастера по ходу работ и решение прораба (docs/TZ.md, 16.9)
+  app.post("/requests/:id/purchases", async (req, reply) =>
+    reply.status(201).send({ purchases: await s.purchases.add(need(req), id(req), body(schemas.newPurchase, req)) }),
+  );
+  app.post("/purchases/:id/resolve", async (req) => ({ purchases: await s.purchases.resolve(need(req), id(req), body(schemas.resolvePurchase, req)) }));
+
   // Фото: тело запроса — сама картинка, вид — в адресе (?kind=before)
   app.post("/requests/:id/files", async (req, reply) =>
     reply.status(201).send({ file: await s.requests.upload(need(req), id(req), query(schemas.fileKind, req).kind, image(req)) }),

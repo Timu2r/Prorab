@@ -173,10 +173,11 @@ export class EstimateService {
   }
 
   /**
-   * Клиент утверждает отправленную смету; владелец — черновик или отправленную («согласовано по телефону»).
-   * Первое согласование заключает договор: клиент при этом явно принимает его условия (acceptContract).
+   * Клиент утверждает отправленную смету; владелец — черновик или отправленную: клиент согласился по телефону или
+   * лично на встрече (method paper — договор подписан на бумаге). Первое согласование заключает договор: клиент при
+   * этом явно принимает его условия (acceptContract).
    */
-  async approve(user: User, id: string, opts: { acceptContract?: boolean; ip?: string } = {}) {
+  async approve(user: User, id: string, opts: { acceptContract?: boolean; ip?: string; method?: "phone" | "paper" } = {}) {
     return this.db.tx(async (q) => {
       const { e, as } = await this.loadFor(q, user, id);
       mustBe(as, "owner", "client");
@@ -194,9 +195,9 @@ export class EstimateService {
       const full = await this.one(q, e.request_id, id);
       await q.query(`UPDATE requests SET price_work = $1, price_goods = $2, updated_at = now() WHERE id = $3`, [full.totals.work, full.totals.goods, e.request_id]);
       const by = { userId: user.id, role: as };
-      await logEvent(q, e.request_id, by, "estimate_approved", { estimateId: id, version: e.version, byPhone: as === "owner" });
-      if (firstContract)
-        await ensureContract(q, e.request_id, id, by, as === "client" ? "online" : "phone", opts.ip ?? "", { work: full.totals.work, goods: full.totals.goods });
+      const method = as === "client" ? "online" : (opts.method ?? "phone");
+      await logEvent(q, e.request_id, by, "estimate_approved", { estimateId: id, version: e.version, byPhone: as === "owner", method });
+      if (firstContract) await ensureContract(q, e.request_id, id, by, method, opts.ip ?? "", { work: full.totals.work, goods: full.totals.goods });
       await syncStatus(q, e.request_id, by);
       return as === "owner" ? full : clientEstimate(full);
     });

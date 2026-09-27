@@ -1,5 +1,5 @@
 import { CATEGORY_LABELS, formatPhone, formatRub, STATUS_LABELS, UNIT_LABELS, type RequestStatus } from "@ks/core";
-import { CalendarClock, Camera, Check, MapPin, Navigation, Phone, X } from "lucide-react-native";
+import { CalendarClock, Check, CircleCheck, MapPin, Navigation, Phone, X } from "lucide-react-native";
 import { useState } from "react";
 import { Linking, Text, View } from "react-native";
 import { api, errorText } from "../api";
@@ -8,12 +8,16 @@ import { useTheme } from "../theme";
 import type { MasterTaskDetail } from "../types";
 import { Button, Card, confirm, ErrorBox, Field, Loading, Pill, Screen, Section, statusTone } from "../ui";
 import { useApi } from "../useApi";
+import { ExtraWorkForm, MasterPurchases, MaterialsUsage, PhotoStrip, Thumbs } from "./WorkBlock";
 
-/** Следующий шаг мастера по заданию. «Готово» с фото и расходом материалов — в следующем обновлении (этап D). */
+/** Следующий шаг мастера до работы на объекте. На месте — фото, расход, покупки и «Готово». */
 const NEXT: Partial<Record<RequestStatus, { to: RequestStatus; title: string }>> = {
   accepted: { to: "en_route", title: "Выехал" },
   en_route: { to: "on_site", title: "На месте" },
 };
+
+/** О покупках мастер сообщает с «Принять» до закрытия заявки. */
+const PURCHASES_OPEN: RequestStatus[] = ["accepted", "en_route", "on_site", "done"];
 
 /** Задание мастера: без цен клиента; адрес и телефон — после «Принять». */
 export function MasterTask({ id }: { id: string }) {
@@ -41,6 +45,17 @@ export function MasterTask({ id }: { id: string }) {
   const visit = r ? formatVisit(r.visitAt, r.visitUntil) : null;
   const next = r ? NEXT[r.status] : undefined;
   const place = r?.address ? [r.address, r.apartment && `кв. ${r.apartment}`, r.entrance && `подъезд ${r.entrance}`, r.floor && `этаж ${r.floor}`, r.intercom && `домофон ${r.intercom}`].filter(Boolean).join(", ") : null;
+  const onSite = !!r && r.mine && r.status === "on_site";
+  const done = !!r && r.mine && r.status === "done";
+
+  // Чего не хватает для «Готово» (правило 4) — показываем до нажатия, чтобы не упираться в ошибку
+  const missing = r
+    ? [
+        !r.files.some((f) => f.kind === "before") && "фото до",
+        !r.files.some((f) => f.kind === "after") && "фото после",
+        r.materials.some((m) => m.usedQty === null) && "расход материалов",
+      ].filter(Boolean)
+    : [];
 
   return (
     <Screen
@@ -57,7 +72,17 @@ export function MasterTask({ id }: { id: string }) {
         <>
           <Card style={{ gap: 10 }}>
             <Row icon={<CalendarClock size={20} color={visit ? t.accent : t.muted} />} text={visit ? `Визит ${visit}` : "Время визита пока не назначено"} />
-            <Row icon={<MapPin size={20} color={place ? t.accent : t.muted} />} text={place ?? (r.district ? `${r.district} — адрес откроется после «Принять»` : "Адрес откроется после «Принять»")} />
+            <Row
+              icon={<MapPin size={20} color={place ? t.accent : t.muted} />}
+              text={
+                place ??
+                (r.client
+                  ? "Адрес в заявке не указан — уточните у клиента по телефону"
+                  : r.district
+                    ? `${r.district} — адрес откроется после «Принять»`
+                    : "Адрес откроется после «Принять»")
+              }
+            />
             {r.client ? (
               <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
                 <Button small icon={Phone} title={`${r.client.name || "Клиент"} · ${formatPhone(r.client.phone)}`} onPress={() => void Linking.openURL(`tel:${r.client!.phone}`)} />
@@ -92,12 +117,71 @@ export function MasterTask({ id }: { id: string }) {
           ) : null}
 
           {next && r.mine ? <Button title={next.title} loading={busy === "next"} onPress={() => act("next", () => api("POST", `/requests/${id}/status`, { to: next.to }))} /> : null}
-          {r.status === "on_site" ? (
-            <Card style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-              <Camera size={20} color={t.muted} />
-              <Text style={{ flex: 1, color: t.muted, fontSize: 14, lineHeight: 20 }}>Фото до и после и «Готово» — в следующем обновлении приложения.</Text>
+
+          {done ? (
+            <Card style={{ flexDirection: "row", gap: 10, alignItems: "center", borderColor: t.success }}>
+              <CircleCheck size={22} color={t.success} />
+              <Text style={{ flex: 1, color: t.text, fontSize: 15, lineHeight: 21 }}>Работы выполнены. Прораб примет работу у клиента и рассчитается с вами.</Text>
             </Card>
           ) : null}
+
+          {onSite || done ? (
+            <>
+              <PhotoStrip
+                requestId={id}
+                kind="before"
+                title="Фото до работ"
+                hint="Место работ, стены, пол, отделка — всё, что может пострадать. Это ваша защита в споре «было до вас»."
+                files={r.files}
+                canAdd={onSite}
+                onChanged={reload}
+              />
+              <MaterialsUsage key={r.materials.map((m) => `${m.id}:${m.usedQty}`).join()} requestId={id} materials={r.materials} onChanged={reload} />
+            </>
+          ) : null}
+
+          {r.mine && PURCHASES_OPEN.includes(r.status) ? (
+            <MasterPurchases requestId={id} purchases={r.purchases} canAdd onChanged={reload} />
+          ) : null}
+
+          {onSite ? (
+            <>
+              <Section title="Доп. работы">
+                {r.extraWork.length ? (
+                  <Card style={{ gap: 10 }}>
+                    {r.extraWork.map((e, i) => (
+                      <View key={i} style={{ gap: 6 }}>
+                        <Text style={{ color: t.text, fontSize: 15, lineHeight: 21 }}>{e.text}</Text>
+                        <Thumbs files={e.files} size={64} />
+                      </View>
+                    ))}
+                  </Card>
+                ) : null}
+                <ExtraWorkForm requestId={id} onChanged={reload} />
+              </Section>
+              <PhotoStrip
+                requestId={id}
+                kind="after"
+                title="Фото после работ"
+                hint="Результат, место трассы, наружный блок, серийные номера — по правилам работы на объекте."
+                files={r.files}
+                canAdd={onSite}
+                onChanged={reload}
+              />
+              {missing.length ? <Text style={{ color: t.muted, fontSize: 14 }}>Для «Готово» не хватает: {missing.join(", ")}.</Text> : null}
+              <Button
+                title="Готово — работы выполнены"
+                icon={CircleCheck}
+                disabled={missing.length > 0}
+                loading={busy === "done"}
+                onPress={async () => {
+                  if (!(await confirm("Работы выполнены?", "Клиент увидит фото и сможет принять работу.", "Готово"))) return;
+                  await act("done", () => api("POST", `/requests/${id}/status`, { to: "done" }));
+                }}
+              />
+            </>
+          ) : null}
+          {done ? <PhotoStrip requestId={id} kind="after" title="Фото после работ" hint="" files={r.files} canAdd={false} onChanged={reload} /> : null}
           {message ? <Text style={{ color: t.danger, fontSize: 14 }}>{message}</Text> : null}
 
           {r.description ? (
@@ -118,7 +202,7 @@ export function MasterTask({ id }: { id: string }) {
               </Card>
             </Section>
           ) : null}
-          {r.materials.length ? (
+          {r.materials.length && !(onSite || done) ? (
             <Section title="Материалы">
               <Card style={{ gap: 6 }}>
                 {r.materials.map((m) => (

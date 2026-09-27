@@ -1,4 +1,22 @@
-import type { Answers, CalcId, CalcNote, Category, ContractMethod, EstimateStatus, ItemKind, PayoutKind, PayoutStatus, RequestStatus, Slot, TaxStatus, Unit } from "@ks/core";
+import type {
+  Answers,
+  CalcId,
+  CalcNote,
+  Category,
+  ContractMethod,
+  EstimateStatus,
+  InvoiceKind,
+  InvoiceStatus,
+  ItemKind,
+  PayoutKind,
+  PayoutStatus,
+  PurchaseKind,
+  PurchaseStatus,
+  RequestStatus,
+  Slot,
+  TaxStatus,
+  Unit,
+} from "@ks/core";
 
 /** Ответы API, которые показывают экраны (docs/TZ.md, раздел 8). */
 
@@ -10,8 +28,42 @@ type Base = {
   district: string;
   visitAt: string | null;
   visitUntil: string | null;
+  /** Выезд прораба на объект до договора (docs/TZ.md, 16.9). */
+  surveyAt: string | null;
+  surveyUntil: string | null;
   createdAt: string;
 };
+
+export type FileView = { id: string; kind: string; url: string; uploadedBy?: string; createdAt?: string };
+
+/** Покупка по ходу работ: «нужно купить» или «купил сам» с чеком (docs/TZ.md, 16.9). */
+export type Purchase = {
+  id: string;
+  kind: PurchaseKind;
+  text: string;
+  amount: number | null;
+  receiptUrl: string | null;
+  status: PurchaseStatus;
+  master: { id: string; name: string };
+  payoutId: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+export type Invoice = {
+  id: string;
+  number: string;
+  kind: InvoiceKind;
+  amount: number;
+  paymentUrl: string;
+  status: InvoiceStatus;
+  createdAt: string;
+  sentAt: string | null;
+  paidAt: string | null;
+};
+
+export type Act = { accepted: boolean; remarks: string; method: "app" | "paper"; fileUrl: string | null; signedAt: string };
+export type ExtraWork = { at: string; text: string; files: { id: string; url: string }[] };
 
 /** Заявка с сайта: консультация («перезвоните») или подробная (расчёт, пожелания, фото). */
 export type LeadType = "consult" | "full";
@@ -47,7 +99,8 @@ export type ClientRequestItem = Base & {
 
 export type Dashboard = {
   attention: { kind: string; text: string; requestId: string | null; number: string | null; payoutId: string | null; since: string }[];
-  today: { id: string; number: string; status: RequestStatus; category: Category; district: string; visitAt: string; visitUntil: string | null; master: string | null }[];
+  /** visit — визит мастера, survey — выезд прораба на объект (master — имя прораба). */
+  today: { kind: "visit" | "survey"; id: string; number: string; status: RequestStatus; category: Category; district: string; visitAt: string; visitUntil: string | null; master: string | null }[];
   month: {
     month: string;
     newRequests: number;
@@ -149,9 +202,17 @@ export type OwnerRequestDetail = OwnerRequestItem &
     contract: Contract | null;
     wantedDate: string | null;
     wantedSlot: Slot;
-    files: { id: string; kind: string; url: string }[];
+    files: FileView[];
     ownerNote: string;
     estimates: Estimate[];
+    invoices: Invoice[];
+    purchases: Purchase[];
+    extraWork: ExtraWork[];
+    acts: Act[];
+    payouts: Payout[];
+    money: { revenue: number; goodsCost: number; payouts: number; tax: number; profit: number };
+    doneAt: string | null;
+    closedAt: string | null;
     events: RequestEvent[];
     payForecast: number | null;
     cancelReason: string;
@@ -165,6 +226,10 @@ export type MasterTaskDetail = MasterRequestItem & {
   intercom: string | null;
   works: { name: string; unit: Unit; qty: number }[];
   materials: { id: string; name: string; unit: Unit; qty: number; usedQty: number | null }[];
+  files: FileView[];
+  extraWork: ExtraWork[];
+  purchases: Purchase[];
+  acts: Act[];
   role: "master" | "lead";
 };
 

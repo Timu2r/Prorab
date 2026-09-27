@@ -9,7 +9,7 @@ import type { Dashboard } from "../../src/types";
 import { Card, Empty, ErrorBox, Loading, Pill, Screen, Section, Stat, statusTone } from "../../src/ui";
 import { useApi } from "../../src/useApi";
 
-/** Сводка владельца: что требует внимания, визиты сегодня, деньги месяца. */
+/** Сводка владельца: что требует внимания, визиты мастеров и выезды прораба сегодня, деньги месяца. */
 export default function OwnerDashboard() {
   const t = useTheme();
   const { user } = useAuth();
@@ -50,17 +50,22 @@ export default function OwnerDashboard() {
 
           <Section title="Сегодня">
             {d.today.length === 0 ? (
-              <Empty icon={CalendarClock} title="Визитов на сегодня нет" />
+              <Empty icon={CalendarClock} title="Визитов и выездов на сегодня нет" />
             ) : (
               d.today.map((v) => (
-                <Card key={v.id} style={{ gap: 6 }} onPress={() => router.push(`/request/${v.id}`)}>
+                <Card
+                  key={`${v.kind}-${v.id}`}
+                  style={[{ gap: 6 }, v.kind === "survey" ? { borderLeftWidth: 3, borderLeftColor: t.accent } : null]}
+                  onPress={() => router.push(`/request/${v.id}`)}
+                >
                   <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
                     <Text style={{ color: t.text, fontSize: 16, fontWeight: "800" }}>{formatVisit(v.visitAt, v.visitUntil)}</Text>
-                    <Pill text={STATUS_LABELS[v.status]} tone={statusTone(v.status)} />
+                    {v.kind === "survey" ? <Pill text="Ваш выезд" tone="accent" /> : <Pill text={STATUS_LABELS[v.status]} tone={statusTone(v.status)} />}
                   </View>
                   <Text style={{ color: t.muted, fontSize: 14 }}>
                     {v.number} · {CATEGORY_LABELS[v.category]}
-                    {v.district ? ` · ${v.district}` : ""} · {v.master ?? "мастер не назначен"}
+                    {v.district ? ` · ${v.district}` : ""} ·{" "}
+                    {v.kind === "survey" ? `выезд на объект${v.master ? `, прораб ${v.master}` : ""}` : (v.master ?? "мастер не назначен")}
                   </Text>
                 </Card>
               ))

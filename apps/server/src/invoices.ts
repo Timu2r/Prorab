@@ -110,7 +110,6 @@ export class InvoiceService {
     return this.db.tx(async (q) => {
       const i = await this.ownerInvoice(q, user, id);
       if (i.status !== "draft") throw new ApiError(409, "not_draft", "Счёт уже отправлен");
-      if (!i.payment_url) throw new ApiError(400, "url_required", "Вставьте ссылку на оплату из банка");
       await q.query(`UPDATE invoices SET status = 'sent', sent_at = now() WHERE id = $1`, [id]);
       const by = { userId: user.id, role: "owner" };
       await logEvent(q, i.request_id, by, "invoice_sent", { invoiceId: id, amount: Number(i.amount) });

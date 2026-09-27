@@ -6,6 +6,7 @@ import {
   OWNER_SOURCES,
   PAYOUT_METHODS,
   PAYOUT_STATUSES,
+  PURCHASE_KINDS,
   REQUEST_SOURCES,
   REQUEST_STATUSES,
   SLOTS,
@@ -119,7 +120,8 @@ export const schemas = {
       .optional(),
   }),
   availability: z.object({ available: z.boolean() }),
-  approveEstimate: z.object({ acceptContract: z.boolean().default(false) }),
+  // Владелец отмечает согласие клиента: по телефону или лично — договор подписан на бумаге при встрече
+  approveEstimate: z.object({ acceptContract: z.boolean().default(false), method: z.enum(["phone", "paper"]).optional() }),
   newRequest: z.object({
     category: z.enum(CATEGORIES),
     serviceIds: z.array(z.string().max(60)).max(20).default([]),
@@ -147,6 +149,8 @@ export const schemas = {
       wantedSlot: z.enum(SLOTS),
       visitAt: datetime.nullable(),
       visitUntil: datetime.nullable(),
+      surveyAt: datetime.nullable(),
+      surveyUntil: datetime.nullable(),
       serviceIds: z.array(z.string().max(60)).max(20),
       ownerNote: z.string().max(2000),
     })
@@ -171,7 +175,18 @@ export const schemas = {
   act: z.object({ accepted: z.boolean(), remarks: z.string().max(2000).default("") }),
   actPaper: z.object({ fileId: id }),
   review: z.object({ rating: z.number().int().min(1).max(5), text: z.string().max(2000).default("") }),
-  fileKind: z.object({ kind: z.enum(["client_photo", "before", "after", "extra_work", "act_paper"]) }),
+  fileKind: z.object({ kind: z.enum(["client_photo", "before", "after", "extra_work", "act_paper", "receipt"]) }),
+
+  // Покупки мастера по ходу работ: «нужно купить» или «купил сам» — с суммой и, по возможности, фото чека
+  newPurchase: z
+    .object({
+      kind: z.enum(PURCHASE_KINDS),
+      text: z.string().trim().min(2, "Напишите, что купить или что купили").max(500),
+      amount: kopecks.positive().nullable().default(null),
+      fileId: id.nullable().default(null),
+    })
+    .refine((p) => p.kind === "need" || p.amount !== null, { message: "Укажите, сколько потратили", path: ["amount"] }),
+  resolvePurchase: z.object({ status: z.enum(["done", "approved", "rejected"]), amount: kopecks.positive().optional() }),
   fileGet: z.object({ exp: z.string().optional(), sig: z.string().optional() }),
 
   // Смета

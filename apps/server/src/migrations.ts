@@ -395,6 +395,34 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
         ORDER BY e.at LIMIT 1
       ) WHERE foreman_id IS NULL;`,
   },
+  {
+    // Конец заказа по порядку владельца (docs/TZ.md, 16.9): выезд прораба на объект до договора, покупки мастера
+    // по ходу работ («нужно купить» или «купил сам» с чеком) и возмещение купленного в выплате мастеру.
+    id: 10,
+    sql: () => `
+      ALTER TABLE requests ADD COLUMN survey_at timestamptz;
+      ALTER TABLE requests ADD COLUMN survey_until timestamptz;
+      ALTER TABLE files DROP CONSTRAINT files_kind_check;
+      ALTER TABLE files ADD CONSTRAINT files_kind_check
+        CHECK (kind IN ('client_photo', 'before', 'after', 'extra_work', 'act_paper', 'npd_receipt', 'receipt'));
+      ALTER TABLE payouts DROP CONSTRAINT payouts_kind_check;
+      ALTER TABLE payouts ADD CONSTRAINT payouts_kind_check CHECK (kind IN ('work', 'deduction', 'bonus', 'expense'));
+      CREATE TABLE purchases (
+        id           text PRIMARY KEY,
+        request_id   text NOT NULL REFERENCES requests(id),
+        master_id    text NOT NULL REFERENCES masters(user_id),
+        kind         text NOT NULL CHECK (kind IN ('need', 'bought')),
+        text         text NOT NULL,
+        amount       bigint,
+        file_id      text REFERENCES files(id),
+        status       text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'approved', 'rejected')),
+        payout_id    text REFERENCES payouts(id),
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        resolved_at  timestamptz,
+        resolved_by  text REFERENCES users(id)
+      );
+      CREATE INDEX purchases_request ON purchases (request_id);`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

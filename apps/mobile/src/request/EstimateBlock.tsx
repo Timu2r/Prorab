@@ -9,7 +9,7 @@ import {
   type RequestStatus,
   type Unit,
 } from "@ks/core";
-import { Check, Copy, MessageCircle, PencilLine, Plus, Search, Send, Trash2, X } from "lucide-react-native";
+import { Check, Copy, MessageCircle, PencilLine, Plus, Search, Send, Trash2, X, FileSignature } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Linking, Modal, Platform, Pressable, ScrollView, Share, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -241,17 +241,19 @@ export function EstimateBlock({
               })
             }
           />
-          <Button title="Клиент согласен по телефону" icon={Check} variant="outline" loading={busy === "approve"} onPress={() => run("approve", approve)} />
+          <Button title="Клиент согласен по телефону" icon={Check} variant="outline" loading={busy === "approve"} onPress={() => run("approve", () => approve("phone"))} />
+          <Button title="Подписали договор лично" icon={FileSignature} variant="outline" loading={busy === "paper"} onPress={() => run("paper", () => approve("paper"))} />
         </View>
       ) : null}
 
       {!final && est.status === "sent" ? (
         <View style={{ gap: 10 }}>
           <Text style={{ color: t.muted, fontSize: 14, lineHeight: 20 }}>
-            Смета у клиента в личном кабинете. Договор заключится, когда он нажмёт «Согласен». Если клиент согласился по телефону — отметьте это.
+            Смета у клиента в «Мои заказы» на сайте. Договор заключится, когда он нажмёт «Согласен». Согласился по телефону или подписали договор на встрече — отметьте это.
           </Text>
           <ShareRow onWhatsApp={whatsapp} onCopy={() => run("copy", copy)} highlight={shared} />
-          <Button title="Клиент согласен по телефону" icon={Check} loading={busy === "approve"} onPress={() => run("approve", approve)} />
+          <Button title="Клиент согласен по телефону" icon={Check} loading={busy === "approve"} onPress={() => run("approve", () => approve("phone"))} />
+          <Button title="Подписали договор лично" icon={FileSignature} variant="outline" loading={busy === "paper"} onPress={() => run("paper", () => approve("paper"))} />
           <Button title="Изменить смету" icon={PencilLine} variant="ghost" loading={busy === "version"} onPress={() => run("version", newVersion)} />
         </View>
       ) : null}
@@ -275,15 +277,18 @@ export function EstimateBlock({
     </Section>
   );
 
-  async function approve() {
+  /** Согласие клиента, которое отмечает владелец: по телефону или лично — договор подписан на бумаге при встрече. */
+  async function approve(method: "phone" | "paper") {
     const ok = await confirm(
       "Клиент согласен?",
-      `Смета на ${formatRub(live?.total ?? 0)} будет согласована, а договор с клиентом — заключён «по телефону». Клиент увидит копию договора в личном кабинете.`,
+      method === "paper"
+        ? `Смета на ${formatRub(live?.total ?? 0)} будет согласована, договор — отмечен как подписанный лично на встрече. Клиент увидит его в «Мои заказы».`
+        : `Смета на ${formatRub(live?.total ?? 0)} будет согласована, а договор с клиентом — заключён «по телефону». Клиент увидит копию договора в «Мои заказы».`,
       "Согласовать",
     );
     if (!ok) return;
     if (dirty) await save();
-    await api("POST", `/estimates/${est!.id}/approve`, {});
+    await api("POST", `/estimates/${est!.id}/approve`, { method });
     await onChanged();
   }
 

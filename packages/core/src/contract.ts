@@ -14,7 +14,7 @@ export type ContractMethod = (typeof CONTRACT_METHODS)[number];
 export const CONTRACT_METHOD_LABELS: Record<ContractMethod, string> = {
   online: "онлайн: смета согласована в личном кабинете",
   phone: "по телефону: клиент согласился, владелец отметил в приложении",
-  paper: "на бумаге",
+  paper: "лично: подписан на бумаге при встрече с прорабом",
 };
 
 export type ContractData = {

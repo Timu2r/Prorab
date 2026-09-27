@@ -20,7 +20,7 @@ import {
 import { ArrowLeft, CircleAlert, CircleCheck, FileSignature, HardHat, Phone, ReceiptText, ShieldCheck, UserRound } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, ApiError } from "../api";
+import { api, ApiError, apiUrl } from "../api";
 import { useAuth } from "../auth";
 import "../calculator.css";
 import "../cabinet.css";
@@ -58,6 +58,12 @@ export type ClientRequest = {
   apartment: string;
   visitAt: string | null;
   visitUntil: string | null;
+  /** Выезд прораба на объект до договора: осмотр, замер, договор и аванс (docs/TZ.md, 16.9). */
+  surveyAt: string | null;
+  surveyUntil: string | null;
+  /** Фото клиента, а после «Готово» — фото до и после работ и бумажный акт. Ссылки подписаны на 1 час. */
+  files: { id: string; kind: string; url: string }[];
+  acts: { accepted: boolean; remarks: string; method: "app" | "paper"; signedAt: string }[];
   /** Номер из заявки — его подтверждают кодом. */
   phone: string;
   /** false — смотрим без кода или заявку на чужой номер: согласовать нельзя. */
@@ -79,9 +85,9 @@ function nowText(r: ClientRequest): string {
   const visit = r.visitAt ? visitText(r.visitAt, r.visitUntil) : null;
   switch (r.status) {
     case "new":
-      return r.estimates.some((e) => e.status === "sent")
-        ? "Смета готова — посмотрите её ниже и согласуйте."
-        : "Прораб позвонит в течение 15 минут в рабочее время, с 9 до 21: уточнит детали и пришлёт смету сюда.";
+      if (r.estimates.some((e) => e.status === "sent")) return "Смета готова — посмотрите её ниже и согласуйте.";
+      if (r.surveyAt) return `Прораб приедет на объект ${visitText(r.surveyAt, r.surveyUntil)}: осмотрит, замерит и уточнит смету. Договор и аванс — на этой встрече.`;
+      return "Прораб позвонит в течение 15 минут в рабочее время, с 9 до 21: уточнит детали и пришлёт смету сюда.";
     case "agreed":
       return visit ? `Смета согласована. Подбираем мастера на ${visit}.` : "Смета согласована. Прораб согласует с вами день визита и подберёт мастера.";
     case "invoiced":
@@ -97,7 +103,9 @@ function nowText(r: ClientRequest): string {
     case "on_site":
       return "Мастер на месте, идут работы.";
     case "done":
-      return "Работы выполнены. Прораб свяжется с вами для приёмки.";
+      return r.acts.some((a) => !a.accepted)
+        ? "Мы получили ваши замечания — прораб свяжется с вами и договорится, как их исправить."
+        : "Работы выполнены. Посмотрите фото ниже и примите работу — или напишите замечания.";
     case "act_signed":
       return "Работа принята. Оплата — при встрече с прорабом.";
     case "paid":
@@ -193,8 +201,14 @@ function Request({ r, onChanged }: { r: ClientRequest; onChanged: () => void }) 
         ))}
 
       <div className="request-facts">
+        {r.surveyAt && (
+          <div>
+            <small>Выезд прораба</small>
+            <b>{visitText(r.surveyAt, r.surveyUntil)}</b>
+          </div>
+        )}
         <div>
-          <small>Визит</small>
+          <small>Визит мастера</small>
           <b>{r.visitAt ? visitText(r.visitAt, r.visitUntil) : "согласуем по телефону"}</b>
         </div>
         <div>
@@ -242,6 +256,10 @@ function Request({ r, onChanged }: { r: ClientRequest; onChanged: () => void }) 
           ) : null}
         </section>
       )}
+
+      <Photos files={r.files} />
+
+      {r.status === "done" && <Acceptance r={r} device={device} onChanged={onChanged} />}
 
       {r.invoices.length > 0 && <Invoices invoices={r.invoices} />}
 
@@ -297,6 +315,99 @@ function Team({ r }: { r: ClientRequest }) {
       ))}
       {!r.team.length && pending && <p className="muted team-pending">{pending}</p>}
     </section>
+  );
+}
+
+/** Фото работ: до и после — видны, когда мастер нажал «Готово». */
+function Photos({ files }: { files: ClientRequest["files"] }) {
+  const groups: [string, string][] = [
+    ["before", "До работ"],
+    ["after", "После работ"],
+    ["act_paper", "Подписанный акт"],
+  ];
+  const shown = groups.filter(([k]) => files.some((f) => f.kind === k));
+  if (!shown.length) return null;
+  return (
+    <section className="panel">
+      <h2>Фото работ</h2>
+      {shown.map(([k, title]) => (
+        <div key={k} className="photo-group">
+          <h3>{title}</h3>
+          <div className="photo-grid">
+            {files
+              .filter((f) => f.kind === k)
+              .map((f, i) => (
+                <a key={f.id} href={apiUrl(f.url)} target="_blank" rel="noreferrer">
+                  <img src={apiUrl(f.url)} alt={`${title}, фото ${i + 1}`} loading="lazy" />
+                </a>
+              ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** Приёмка: «Принять работу» или «Есть замечания». Это подпись под актом — только после кода (docs/TZ.md, 9.4). */
+function Acceptance({ r, device, onChanged }: { r: ClientRequest; device: boolean; onChanged: () => void }) {
+  const [remarks, setRemarks] = useState("");
+  const [writing, setWriting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const send = async (accepted: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      await api("POST", `/requests/${r.id}/act`, { accepted, remarks });
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Не получилось. Попробуйте ещё раз");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!r.canAct)
+    return device ? (
+      <div className="approve">
+        <span className="calc-small">Принять работу — это подпись под актом. Подтвердите номер кодом из звонка, и вы вернётесь сюда.</span>
+        <div className="approve-actions">
+          <Link className="btn btn-primary" to={`/login?next=${encodeURIComponent(`/cabinet/z/${r.id}`)}`}>
+            Подтвердить номер и принять работу
+          </Link>
+        </div>
+      </div>
+    ) : null;
+  return (
+    <div className="approve">
+      <b>Работы выполнены. Всё в порядке?</b>
+      <span className="calc-small">«Принять работу» — ваша подпись под актом: работы выполнены, претензий нет. Гарантия {BRAND.warrantyMonths} месяцев начнётся после расчёта.</span>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="approve-actions">
+        <button className="btn btn-primary" disabled={busy} onClick={() => send(true)}>
+          Принять работу
+        </button>
+        {!writing && (
+          <button className="btn btn-outline" onClick={() => setWriting(true)}>
+            Есть замечания
+          </button>
+        )}
+      </div>
+      {writing && (
+        <div className="reject">
+          <label className="field">
+            <span>Что не так</span>
+            <textarea className="input" value={remarks} onChange={(e) => setRemarks(e.target.value)} maxLength={2000} placeholder="Например: на стене остались следы от сверления" />
+          </label>
+          <button className="btn btn-outline" disabled={busy || remarks.trim().length < 3} onClick={() => send(false)}>
+            Отправить прорабу
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
