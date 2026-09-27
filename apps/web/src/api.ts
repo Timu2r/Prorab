@@ -33,6 +33,20 @@ export const token = {
   },
 };
 
+/** Фото на сервер как есть, без multipart: тело запроса — сама картинка. */
+export async function uploadImage(path: string, blob: Blob): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { method: "POST", headers: { "content-type": blob.type || "image/jpeg" }, body: blob });
+  } catch {
+    throw new ApiError(0, "offline", "Нет связи с сервером");
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, data.error?.code ?? "unknown", data.error?.message ?? "Не удалось загрузить фото");
+  }
+}
+
 export async function api<T>(method: "GET" | "POST" | "PATCH", path: string, body?: object): Promise<T> {
   const t = token.get();
   let res: Response;

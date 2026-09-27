@@ -1,6 +1,6 @@
 import { CALCULATORS, normalizeAnswers } from "@ks/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CLIENT, MASTER, OWNER, scene, setup, teardown, type T } from "./helpers";
+import { CLIENT, JPEG, MASTER, OWNER, scene, setup, teardown, type T } from "./helpers";
 
 let t: T;
 beforeEach(async () => (t = await setup()));
@@ -60,7 +60,7 @@ describe("калькулятор на сайте", () => {
   it("неизвестный калькулятор — ошибка, обычная заявка без расчёта — как раньше", async () => {
     expect((await t.call("POST", "/public/leads", undefined, { ...lead, calc: { id: "space", answers: {} } })).status).toBe(400);
     const res = await t.call("POST", "/public/leads", undefined, { ...lead, comment: "Повесить полку" });
-    expect(res.body).toEqual({ number: "Z-0001", total: null });
+    expect(res.body).toMatchObject({ number: "Z-0001", total: null, upload: null }); // без расчёта — консультация, фото не прикладывают
   });
 });
 
@@ -124,5 +124,54 @@ describe("мастер: «принимаю заказы»", () => {
 
     // Владелец тоже может включить мастеру приём заказов
     expect((await t.call("PATCH", `/admin/masters/${m.id}`, owner, { available: true })).body.master.available).toBe(true);
+  });
+});
+
+describe("три способа оставить заявку", () => {
+  const photo = (id: string, exp: number, sig: string) =>
+    t.app.inject({ method: "POST", url: `/public/leads/${id}/photos?exp=${exp}&sig=${sig}`, payload: JPEG, headers: { "content-type": "image/jpeg" } });
+
+  it("консультация: только телефон и пара слов — без сметы и без загрузки фото", async () => {
+    const res = await t.call("POST", "/public/leads", undefined, { ...lead, type: "consult", category: "electric", comment: "Искрит розетка" });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.upload).toBeNull();
+    const owner = await t.login(OWNER);
+    const r = (await t.call("GET", `/requests/${res.body.id}`, owner)).body.request;
+    expect(r).toMatchObject({ leadType: "consult", category: "electric", description: "Искрит розетка", calc: null, estimates: [] });
+  });
+
+  it("подробная: расчёт, когда удобно, адрес по частям и фото по подписи", async () => {
+    const res = await t.call("POST", "/public/leads", undefined, {
+      ...lead,
+      type: "full",
+      comment: "Кондиционер в спальню над окном",
+      address: "Москва, Профсоюзная, 12",
+      apartment: "45",
+      floor: "7",
+      wantedDate: "2026-10-01",
+      wantedSlot: "morning",
+      calc: { id: "climate", answers: { small: 1 } },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { id, upload } = res.body;
+    expect(upload.sig).toBeTruthy();
+
+    expect((await photo(id, upload.exp, "подделка")).statusCode).toBe(403);
+    for (let i = 0; i < 5; i++) expect((await photo(id, upload.exp, upload.sig)).statusCode).toBe(201);
+    const sixth = await photo(id, upload.exp, upload.sig);
+    expect(sixth.statusCode).toBe(409);
+
+    const owner = await t.login(OWNER);
+    const r = (await t.call("GET", `/requests/${id}`, owner)).body.request;
+    expect(r).toMatchObject({ leadType: "full", apartment: "45", floor: "7", wantedDate: "2026-10-01", wantedSlot: "morning" });
+    expect(r.files.filter((f: { kind: string }) => f.kind === "client_photo")).toHaveLength(5);
+    expect(r.estimates).toHaveLength(1);
+  });
+
+  it("фото к заявке добавляются, только пока она новая", async () => {
+    const res = await t.call("POST", "/public/leads", undefined, { ...lead, type: "full", calc: { id: "vent", answers: {} } });
+    const owner = await t.login(OWNER);
+    await t.call("POST", `/requests/${res.body.id}/status`, owner, { to: "cancelled", reason: "Клиент передумал" });
+    expect((await photo(res.body.id, res.body.upload.exp, res.body.upload.sig)).statusCode).toBe(409);
   });
 });

@@ -5,14 +5,16 @@ import {
   describeAnswers,
   formatPhone,
   formatRub,
+  SLOT_LABELS,
   SOURCE_LABELS,
   STATUS_LABELS,
   type RequestSource,
   type RequestStatus,
 } from "@ks/core";
 import { router } from "expo-router";
-import { Calculator, FileSignature, MapPin, MessageCircle, Phone } from "lucide-react-native";
-import { Linking, Text, View } from "react-native";
+import { Calculator, CalendarHeart, FileSignature, MapPin, MessageCircle, Phone, PhoneCall } from "lucide-react-native";
+import { Image, Linking, Pressable, Text, View } from "react-native";
+import { fileUrl } from "../api";
 import { ago, formatDate, formatTime } from "../format";
 import { useTheme } from "../theme";
 import type { CalcSnapshot, Contract, OwnerRequestDetail, RequestEvent } from "../types";
@@ -42,8 +44,10 @@ export function OwnerRequest({ id }: { id: string }) {
       {r ? (
         <>
           <ClientCard r={r} />
+          {r.leadType === "consult" ? <ConsultCard r={r} /> : null}
           {r.calc ? <CalcCard calc={r.calc} comment={r.description.split("Расчёт на сайте:")[0]!.trim()} /> : null}
-          {!r.calc && r.description ? (
+          <WishesCard r={r} />
+          {!r.calc && r.leadType !== "consult" && r.description ? (
             <Section title="Задача">
               <Card>
                 <Text style={{ color: t.text, fontSize: 15, lineHeight: 21 }}>{r.description}</Text>
@@ -82,6 +86,53 @@ function ClientCard({ r }: { r: OwnerRequestDetail }) {
           <MapPin size={18} color={place ? t.accent : t.muted} style={{ marginTop: 2 }} />
           <Text style={{ flex: 1, color: place ? t.text : t.muted, fontSize: 15, lineHeight: 21 }}>{place || "Адрес не указан — уточните при звонке"}</Text>
         </View>
+      </Card>
+    </Section>
+  );
+}
+
+/** Консультация: клиент ничего не считал, просит перезвонить. */
+function ConsultCard({ r }: { r: OwnerRequestDetail }) {
+  const t = useTheme();
+  return (
+    <Section title="Консультация с сайта">
+      <Card style={{ gap: 8, borderColor: t.accent }}>
+        <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+          <PhoneCall size={20} color={t.accent} />
+          <Text style={{ flex: 1, color: t.text, fontSize: 16, fontWeight: "700" }}>Клиент просит перезвонить и подсказать</Text>
+        </View>
+        {r.category !== "general" ? <Text style={{ color: t.muted, fontSize: 14 }}>Направление: {CATEGORY_LABELS[r.category]}</Text> : null}
+        {r.description ? <Text style={{ color: t.text, fontSize: 15, lineHeight: 21 }}>{r.description}</Text> : null}
+        <Text style={{ color: t.muted, fontSize: 13, lineHeight: 19 }}>После звонка создайте смету — дальше как обычно: отправить клиенту или «Клиент согласен».</Text>
+      </Card>
+    </Section>
+  );
+}
+
+/** Пожелания подробной заявки: когда удобно и фото объекта. */
+function WishesCard({ r }: { r: OwnerRequestDetail }) {
+  const t = useTheme();
+  const photos = r.files.filter((f) => f.kind === "client_photo");
+  const when = r.wantedDate || r.wantedSlot ? [r.wantedDate ? formatDate(r.wantedDate) : "как можно скорее", r.wantedSlot ? SLOT_LABELS[r.wantedSlot].toLowerCase() : ""].filter(Boolean).join(", ") : null;
+  if (!when && !photos.length) return null;
+  return (
+    <Section title="Пожелания клиента">
+      <Card style={{ gap: 10 }}>
+        {when ? (
+          <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+            <CalendarHeart size={20} color={t.accent} />
+            <Text style={{ flex: 1, color: t.text, fontSize: 15 }}>Когда удобно: {when}</Text>
+          </View>
+        ) : null}
+        {photos.length ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {photos.map((f, i) => (
+              <Pressable key={f.id} onPress={() => void Linking.openURL(fileUrl(f.url))} accessibilityRole="imagebutton" accessibilityLabel={`Фото клиента ${i + 1}`}>
+                <Image source={{ uri: fileUrl(f.url) }} style={{ width: 96, height: 96, borderRadius: 10, backgroundColor: t.surface2 }} />
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </Card>
     </Section>
   );

@@ -1,4 +1,4 @@
-import type { Answers, CalcId, CalcNote, Category, ContractMethod, EstimateStatus, ItemKind, PayoutKind, PayoutStatus, RequestStatus, TaxStatus, Unit } from "@ks/core";
+import type { Answers, CalcId, CalcNote, Category, ContractMethod, EstimateStatus, ItemKind, PayoutKind, PayoutStatus, RequestStatus, Slot, TaxStatus, Unit } from "@ks/core";
 
 /** Ответы API, которые показывают экраны (docs/TZ.md, раздел 8). */
 
@@ -13,9 +13,13 @@ type Base = {
   createdAt: string;
 };
 
+/** Заявка с сайта: консультация («перезвоните») или подробная (расчёт, пожелания, фото). */
+export type LeadType = "consult" | "full";
+
 export type OwnerRequestItem = Base & {
   address: string;
   source: string;
+  leadType: LeadType | null;
   client: { id: string; name: string; phone: string };
   master: { id: string; name: string; phone: string } | null;
   priceWork: number | null;
@@ -141,6 +145,9 @@ export type OwnerRequestDetail = OwnerRequestItem &
     description: string;
     calc: CalcSnapshot | null;
     contract: Contract | null;
+    wantedDate: string | null;
+    wantedSlot: Slot;
+    files: { id: string; kind: string; url: string }[];
     ownerNote: string;
     estimates: Estimate[];
     events: RequestEvent[];

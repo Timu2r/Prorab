@@ -468,44 +468,143 @@
   font-size: 14px;
 }
 
-/* Старт расчёта на первом экране */
-.calc-start-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.calc-start-grid button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  min-height: 52px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--ink);
-  font: inherit;
-  font-weight: 600;
-  font-size: 14px;
-  line-height: 1.25;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-.calc-start-grid button:hover {
-  border-color: var(--accent);
-}
-.calc-start-grid svg {
-  color: var(--accent);
-  flex: none;
-}
-.calc-start-other {
-  justify-self: start;
-}
 .direction-go {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--accent);
   font-size: 15px;
+}
+
+/* Три способа оставить заявку (components/LeadWays.tsx) */
+.ways {
+  display: grid;
+  gap: 10px;
+}
+.way {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.way:hover {
+  border-color: var(--accent);
+}
+.way > svg {
+  flex: none;
+  color: var(--accent);
+  margin-top: 2px;
+}
+.way span {
+  display: grid;
+  gap: 3px;
+}
+.way b {
+  font-size: 17px;
+}
+.way small {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.way-phone {
+  color: var(--ink);
+  font-size: 15px;
+  white-space: nowrap;
+}
+.way-main {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+
+/* Варианты-кнопки: направление в консультации, когда удобно */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.calc-date {
+  max-width: 220px;
+}
+.calc-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Фото объекта */
+.photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+.photo,
+.photo-add {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.photo button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 11, 13, 0.7);
+  color: #fff;
+  cursor: pointer;
+}
+.photo-add {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 4px;
+  border: 1px dashed var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.photo-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }

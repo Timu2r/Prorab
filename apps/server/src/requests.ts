@@ -28,6 +28,10 @@ import type { SettingsService } from "./settings";
 import { addMonths, moscowDate } from "./time";
 import { ApiError, newId } from "./util";
 
+/** Фото к заявке с сайта: сколько можно приложить и ключ подписи для загрузки без входа. */
+const MAX_LEAD_PHOTOS = 5;
+const leadUploadKey = (requestId: string) => `lead-upload:${requestId}`;
+
 /** Через сколько дней после закрытия мастер перестаёт видеть адрес и телефон клиента (правило 2). */
 const CONTACTS_DAYS_AFTER_CLOSE = 30;
 const WORKING: RequestStatus[] = ["accepted", "en_route", "on_site", "done"];
@@ -64,6 +68,7 @@ function ownerItem(r: RequestRow) {
     ...base(r),
     ...address(r),
     source: r.source,
+    leadType: r.lead_type,
     client: { id: r.client_id, name: r.client_name, phone: r.client_phone },
     master: r.master_id ? { id: r.master_id, name: r.master_name ?? "", phone: r.master_phone ?? "" } : null,
     priceWork: num(r.price_work),
@@ -218,7 +223,14 @@ export class RequestService {
     phone: string;
     category: string;
     comment: string;
+    type?: "consult" | "full";
     address?: string;
+    apartment?: string;
+    entrance?: string;
+    floor?: string;
+    intercom?: string;
+    wantedDate?: string | null;
+    wantedSlot?: string;
     utm?: Record<string, string>;
     calc?: { id: string; answers: Record<string, string | number | boolean> };
   }) {
@@ -254,13 +266,30 @@ export class RequestService {
 
       const id = newId("req");
       const utm = input.utm && Object.keys(input.utm).length ? JSON.stringify(input.utm) : null;
+      const leadType = input.type ?? (qt ? "full" : "consult");
       const [{ number }] = await q.query<{ number: number }>(
-        `INSERT INTO requests (id, client_id, category, description, address, source, consent_at, utm, calc)
-         VALUES ($1, $2, $3, $4, $5, 'site', now(), $6, $7) RETURNING number`,
-        [id, clientId, category, description, input.address ?? "", utm, calc ? JSON.stringify(calc) : null],
+        `INSERT INTO requests (id, client_id, category, description, address, apartment, entrance, floor, intercom, wanted_date, wanted_slot,
+                               source, consent_at, utm, calc, lead_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'site', now(), $12, $13, $14) RETURNING number`,
+        [
+          id,
+          clientId,
+          category,
+          description,
+          input.address ?? "",
+          input.apartment ?? "",
+          input.entrance ?? "",
+          input.floor ?? "",
+          input.intercom ?? "",
+          input.wantedDate ?? null,
+          input.wantedSlot ?? "",
+          utm,
+          calc ? JSON.stringify(calc) : null,
+          leadType,
+        ],
       );
       const by = { userId: clientId, role: "client" };
-      await logEvent(q, id, by, "created", { source: "site", ...(qt ? { calc: qt.calc, total: qt.totals.total } : {}) });
+      await logEvent(q, id, by, "created", { source: "site", leadType, ...(qt ? { calc: qt.calc, total: qt.totals.total } : {}) });
 
       if (qt?.lines.length) {
         const byKey = new Map(items.map((i) => [i.key, i]));
@@ -279,7 +308,31 @@ export class RequestService {
           createdBy: null,
         });
       }
-      return { number: formatRequestNumber(number), total: qt ? qt.totals.total : null };
+      // К подробной заявке клиент прикладывает фото сразу после отправки — без входа, по подписи на 1 час
+      return {
+        number: formatRequestNumber(number),
+        total: qt ? qt.totals.total : null,
+        id,
+        upload: leadType === "full" ? this.files.token(leadUploadKey(id)) : null,
+      };
+    });
+  }
+
+  /** Фото к заявке с сайта: только по подписи из ответа на заявку, только пока заявка новая, не больше 5. */
+  async addLeadPhoto(id: string, token: { exp?: string; sig?: string }, image: { mime: string; data: Buffer }) {
+    if (!this.files.verify(leadUploadKey(id), token.exp, token.sig)) throw new ApiError(403, "link_expired", "Ссылка для загрузки фото устарела");
+    return this.db.tx(async (q) => {
+      const [r] = await q.query<{ client_id: string; status: string }>(`SELECT client_id, status FROM requests WHERE id = $1 AND deleted_at IS NULL`, [id]);
+      if (!r) throw new ApiError(404, "not_found", "Заявка не найдена");
+      if (r.status !== "new") throw new ApiError(409, "not_new", "Фото к заявке можно добавить, пока она новая");
+      const [{ n }] = await q.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM files WHERE request_id = $1 AND kind = 'client_photo' AND deleted_at IS NULL`,
+        [id],
+      );
+      if (n >= MAX_LEAD_PHOTOS) throw new ApiError(409, "too_many_files", `К заявке можно приложить не больше ${MAX_LEAD_PHOTOS} фото`);
+      const fileId = await this.files.save(q, { requestId: id, payoutId: null, uploadedBy: r.client_id, kind: "client_photo", mime: image.mime, data: image.data });
+      await logEvent(q, id, { userId: r.client_id, role: "client" }, "file_added", { fileId, kind: "client_photo" });
+      return { id: fileId };
     });
   }
 

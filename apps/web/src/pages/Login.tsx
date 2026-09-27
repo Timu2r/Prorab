@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { api, ApiError, type User } from "../api";
 import { useAuth } from "../auth";
-import { formatPhoneInput } from "../components/LeadForm";
+import { formatPhoneInput } from "../phone";
 import { SiteHeader } from "../components/SiteHeader";
 
 type CodeResponse = { phone: string; resendAfter: number; devCode?: string };

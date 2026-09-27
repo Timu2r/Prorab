@@ -1,9 +1,9 @@
 import { BRAND, CATEGORY_LABELS, formatRub, isCalcId, UNIT_LABELS, type Category, type Unit } from "@ks/core";
-import { ArrowRight, Camera, FileText, MapPin, MessageSquareText, Plus, Receipt, ShieldCheck, Trash2, Wallet } from "lucide-react";
+import { ArrowRight, Camera, FileText, MapPin, Plus, Receipt, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import { CalculatorDialog, type CalcStart } from "../components/Calculator";
-import { LeadForm } from "../components/LeadForm";
+import { LeadDialog, type LeadStart } from "../components/LeadDialog";
+import { LeadWays } from "../components/LeadWays";
 import { SiteFooter } from "../components/SiteFooter";
 import { SiteHeader } from "../components/SiteHeader";
 import { DIRECTIONS } from "../directions";
@@ -50,17 +50,21 @@ const FAQ = [
 export function HomePage() {
   const [services, setServices] = useState<Service[]>([]);
   const [tab, setTab] = useState<Category>("turnkey");
-  const [calcStart, setCalcStart] = useState<CalcStart | null>(null);
-  const openCalc = (calc: CalcStart["calc"] = null) => setCalcStart({ calc });
+  const [lead, setLead] = useState<LeadStart | null>(null);
+  const openCalc = (calc?: Category) => setLead({ way: "full", calc: calc && isCalcId(calc) ? calc : undefined });
 
   useEffect(() => {
     document.title = `${BRAND.name} — ремонт и строительные работы в Москве и области`;
     api<{ services: Service[] }>("GET", "/services")
       .then((r) => setServices(r.services))
       .catch(() => {}); // без цен страница всё равно работает
-    // Ссылка вида /?calc=climate сразу открывает расчёт направления — для рекламы и мессенджеров
-    const calc = new URLSearchParams(location.search).get("calc");
-    if (calc && (isCalcId(calc) || calc === "general")) setCalcStart({ calc });
+    // Ссылки для рекламы и мессенджеров: /?calc=climate — подробная заявка сразу с расчётом направления,
+    // /?lead=consult — консультация, /?lead=full — подробная заявка
+    const p = new URLSearchParams(location.search);
+    const calc = p.get("calc");
+    if (calc && isCalcId(calc)) setLead({ way: "full", calc });
+    else if (p.get("lead") === "consult") setLead({ way: "consult" });
+    else if (p.get("lead") === "full") setLead({ way: "full" });
   }, []);
 
   // Цена главной работы направления: «Шпаклёвка от 550 ₽/м²». Поштучные позиции — без «/шт».
@@ -125,22 +129,7 @@ export function HomePage() {
                 </div>
               </div>
             </div>
-            <div className="lead-card" id="zayavka">
-              <h2>Рассчитать стоимость</h2>
-              <p>Выберите, что нужно сделать. Примерная цена — сразу, без звонка и регистрации.</p>
-              <div className="calc-start-grid">
-                {DIRECTIONS.map(({ category, Icon }) => (
-                  <button key={category} onClick={() => openCalc(category)}>
-                    <Icon size={20} />
-                    {CATEGORY_LABELS[category]}
-                  </button>
-                ))}
-              </div>
-              <button className="btn-link calc-start-other" onClick={() => openCalc("general")}>
-                <MessageSquareText size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />
-                Другая задача — опишите, перезвоним
-              </button>
-            </div>
+            <LeadWays id="zayavka" title="Оставить заявку" text="Выберите, как удобнее: без регистрации и предоплаты." onOpen={setLead} />
           </div>
         </section>
 
@@ -201,7 +190,7 @@ export function HomePage() {
             </div>
             <div className="price-note">
               <p>Материалы закупаем по счёту заранее, работы оплачиваются после приёмки. На каждую оплату — кассовый чек.</p>
-              <button className="btn btn-outline" onClick={() => openCalc(isCalcId(tab) ? tab : null)}>
+              <button className="btn btn-outline" onClick={() => openCalc(tab)}>
                 Рассчитать стоимость
               </button>
             </div>
@@ -271,12 +260,12 @@ export function HomePage() {
               <h2>Расскажите, что нужно сделать</h2>
               <p>Перезвоним, договоримся об осмотре и подготовим смету.</p>
             </div>
-            <LeadForm title="Заявка на ремонт" category="" />
+            <LeadWays title="Заявка на ремонт" text="Консультация, подробная заявка с расчётом или звонок — как вам удобнее." onOpen={setLead} />
           </div>
         </section>
       </main>
       <SiteFooter />
-      {calcStart && <CalculatorDialog start={calcStart} onClose={() => setCalcStart(null)} />}
+      {lead && <LeadDialog start={lead} onClose={() => setLead(null)} />}
     </>
   );
 }

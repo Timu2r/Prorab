@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app";
-import { body, param, query } from "../http";
+import { body, image, param, query } from "../http";
 import { schemas } from "../schemas";
 import { ApiError } from "../util";
 
@@ -19,6 +19,12 @@ export function publicRoutes(app: FastifyInstance, s: Services) {
     if (hits.length >= 5) throw new ApiError(429, "too_many", "Слишком много заявок. Попробуйте позже или позвоните нам");
     leadHits.set(req.ip, [...hits, now]);
     return reply.status(201).send(await s.requests.createLead(b));
+  });
+
+  // Фото к только что оставленной подробной заявке: тело — сама картинка, подпись — из ответа на заявку
+  app.post("/public/leads/:id/photos", async (req, reply) => {
+    const { exp, sig } = query(schemas.fileGet, req);
+    return reply.status(201).send({ file: await s.requests.addLeadPhoto(param(req, "id"), { exp, sig }, image(req)) });
   });
 
   app.get("/files/:id", async (req, reply) => {

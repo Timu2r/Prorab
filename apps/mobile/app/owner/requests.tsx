@@ -40,7 +40,9 @@ export default function OwnerRequests() {
             number={r.number}
             category={r.category}
             status={r.status}
-            line={[r.client.name || r.client.phone, r.district || r.address].filter(Boolean).join(" · ")}
+            line={[r.leadType === "consult" ? "Консультация" : r.leadType === "full" ? "Подробная" : null, r.client.name || r.client.phone, r.district || r.address]
+              .filter(Boolean)
+              .join(" · ")}
             visitAt={r.visitAt}
             visitUntil={r.visitUntil}
             amount={total ? formatRub(total) : null}

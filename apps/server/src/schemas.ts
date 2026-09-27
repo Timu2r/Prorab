@@ -104,7 +104,12 @@ export const schemas = {
     consent: z.literal(true, { error: "Нужно согласие на обработку персональных данных" }),
     website: z.string().max(200).default(""), // поле-ловушка: человек его не видит, бот заполняет
     utm: z.record(z.string().regex(/^utm_[a-z]{3,8}$/), z.string().max(200)).optional(),
+    // Консультация — «перезвоните мне», подробная — с расчётом, пожеланиями и фото. Без типа: есть расчёт — подробная
+    type: z.enum(["consult", "full"]).optional(),
     address: z.string().trim().max(300).default(""),
+    ...addressParts,
+    wantedDate: date.nullable().default(null),
+    wantedSlot: z.enum(SLOTS).default(""),
     // Ответы калькулятора. Цены с сайта не принимаем: сервер пересчитывает по своему прайсу
     calc: z
       .object({

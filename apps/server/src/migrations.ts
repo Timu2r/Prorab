@@ -369,6 +369,12 @@ const MIGRATIONS: { id: number; sql: () => string }[] = [
       ].join("\n");
     },
   },
+  {
+    // Три способа оставить заявку на сайте (решение владельца 2026-09-27): консультация — «перезвоните мне»,
+    // подробная — расчёт, пожелания и фото. Третий способ — звонок — заявку на сайте не создаёт.
+    id: 8,
+    sql: () => `ALTER TABLE requests ADD COLUMN lead_type text CHECK (lead_type IN ('consult', 'full'));`,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

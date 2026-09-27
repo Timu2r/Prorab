@@ -23,7 +23,13 @@ export class FileService {
     return `/files/${id}?exp=${exp}&sig=${this.sign(id, exp)}`;
   }
 
-  verify(id: string, exp: string | undefined, sig: string | undefined): boolean {
+  /** Подпись для действия без входа, например загрузки фото к только что оставленной заявке. */
+  token(key: string, ttlSec = 3600): { exp: number; sig: string } {
+    const exp = Math.floor(Date.now() / 1000) + ttlSec;
+    return { exp, sig: this.sign(key, exp) };
+  }
+
+  verify(id: string, exp: string | number | undefined, sig: string | undefined): boolean {
     const e = Number(exp);
     if (!sig || !Number.isInteger(e) || e < Date.now() / 1000) return false;
     const want = Buffer.from(this.sign(id, e));
